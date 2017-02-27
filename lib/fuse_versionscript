@@ -15,6 +15,9 @@ FUSE_3.0 {
 		fuse_reply_write;
 		fuse_reply_xattr;
 		fuse_req_userdata;
+		fuse_session_add_statsDir;
+		fuse_session_remove_statsDir;
+		fuse_session_statsDir;
 		fuse_session_add_chan;
 		fuse_session_destroy;
 		fuse_session_exit;

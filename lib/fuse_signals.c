@@ -10,6 +10,7 @@
 #include "fuse_lowlevel.h"
 #include "fuse_i.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
@@ -32,10 +33,21 @@ static void stats_handler(int sig)
 	int /*fd,*/ i, j;
 	FILE *fp = NULL;
 	struct fuse_session *se;
+	char *statsDir = NULL, *statsFile = NULL;
 
 	se = fuse_instance;
+	statsDir = fuse_session_statsDir(se);
+	if (!statsDir) {
+		printf("No Stats Sirectory to copy the statistics\n");
+		return ;
+	}
+	statsFile = (char *)malloc(4096 * sizeof(char));
+	statsFile[0] = '\0';
+	strcpy(statsFile, statsDir);
+	strcat(statsFile, "/user_stats.txt");
+
 	pthread_spin_lock(&se->lock);
-	fp = fopen("/tmp/user_stats.txt" , "w" );
+	fp = fopen(statsFile , "w" );
 	if (fp) {
 		for (i = 1; i < 46; i++) {
 			for (j = 0; j < 33; j++)
@@ -45,6 +57,8 @@ static void stats_handler(int sig)
 	} else {
 		perror("Failed to open User Stats File");
 	}
+	if (statsFile)
+		free(statsFile);
 	if (fp)
 		fclose(fp);
 	pthread_spin_unlock(&se->lock);

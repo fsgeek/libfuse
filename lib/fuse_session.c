@@ -29,6 +29,21 @@ struct fuse_session *fuse_session_new(void)
 	return se;
 }
 
+void fuse_session_add_statsDir(struct fuse_session *se, char *statsdir)
+{
+	se->statsDir = statsdir;
+}
+
+void fuse_session_remove_statsDir(struct fuse_session *se)
+{
+	se->statsDir = NULL;
+}
+
+char *fuse_session_statsDir(struct fuse_session *se)
+{
+	return se->statsDir;
+}
+
 void fuse_session_add_chan(struct fuse_session *se, struct fuse_chan *ch)
 {
 	assert(se->ch == NULL);

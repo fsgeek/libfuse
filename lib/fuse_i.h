@@ -19,7 +19,7 @@ struct fuse_session {
 
 	pthread_spinlock_t lock; /*protects the array*/
 	long long unsigned int processing[46][33];
-
+	char *statsDir;
 	struct fuse_chan *ch;
 };
 
