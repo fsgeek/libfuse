@@ -2939,8 +2939,8 @@ int fuse_session_receive_buf(struct fuse_session *se, struct fuse_buf *buf,
 }
 #endif
 
-/*#define MIN_BUFSIZE 0x21000 */
-#define MIN_BUFSIZE 0x4001000
+#define MIN_BUFSIZE 0x21000
+//#define MIN_BUFSIZE 0x4001000
 
 struct fuse_session *fuse_lowlevel_new(struct fuse_args *args,
 				       const struct fuse_lowlevel_ops *op,
