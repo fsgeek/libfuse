@@ -1054,6 +1054,23 @@ struct fuse_lowlevel_ops {
 };
 
 /**
+ * Function to initialise the request start time
+ * */
+void generate_start_time(fuse_req_t req);
+
+/** 
+ *Function to initialise the request end time
+ * */
+void generate_end_time(fuse_req_t req);
+
+/**
+ * Function to track the difference of the timings and 
+ * store it in the fuse session object
+ * */
+
+void populate_time(fuse_req_t req);
+
+/**
  * Reply with an error code or success
  *
  * Possible requests:

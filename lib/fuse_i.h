@@ -17,6 +17,9 @@ struct fuse_session {
 
 	volatile int exited;
 
+	pthread_spinlock_t lock; /*protects the array*/
+	long long unsigned int processing[46][33];
+
 	struct fuse_chan *ch;
 };
 
@@ -33,6 +36,7 @@ struct fuse_req {
 	struct fuse_ll *f;
 	uint64_t unique;
 	int ctr;
+	int opcode;
 	pthread_mutex_t lock;
 	struct fuse_ctx ctx;
 	struct fuse_chan *ch;
@@ -47,6 +51,8 @@ struct fuse_req {
 			void *data;
 		} ni;
 	} u;
+	struct timespec ts1;
+	struct timespec ts2;
 	struct fuse_req *next;
 	struct fuse_req *prev;
 };

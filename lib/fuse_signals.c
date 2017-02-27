@@ -8,10 +8,12 @@
 
 #include "config.h"
 #include "fuse_lowlevel.h"
-
+#include "fuse_i.h"
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>
+#include <unistd.h>
+#include <pthread.h>
 
 static struct fuse_session *fuse_instance;
 
@@ -23,6 +25,30 @@ static void exit_handler(int sig)
 		fuse_session_exit(fuse_instance);
 }
 /*! [doxygen_exit_handler] */
+
+static void stats_handler(int sig)
+{
+	(void) sig;
+	int /*fd,*/ i, j;
+	FILE *fp = NULL;
+	struct fuse_session *se;
+
+	se = fuse_instance;
+	pthread_spin_lock(&se->lock);
+	fp = fopen("/tmp/user_stats.txt" , "w" );
+	if (fp) {
+		for (i = 1; i < 46; i++) {
+			for (j = 0; j < 33; j++)
+				fprintf(fp, "%llu ", se->processing[i][j]);
+			fprintf(fp, "\n");
+		}
+	} else {
+		perror("Failed to open User Stats File");
+	}
+	if (fp)
+		fclose(fp);
+	pthread_spin_unlock(&se->lock);
+}
 
 static int set_one_signal_handler(int sig, void (*handler)(int), int remove)
 {
@@ -52,9 +78,10 @@ int fuse_set_signal_handlers(struct fuse_session *se)
 	if (set_one_signal_handler(SIGHUP, exit_handler, 0) == -1 ||
 	    set_one_signal_handler(SIGINT, exit_handler, 0) == -1 ||
 	    set_one_signal_handler(SIGTERM, exit_handler, 0) == -1 ||
-	    set_one_signal_handler(SIGPIPE, SIG_IGN, 0) == -1)
+	    set_one_signal_handler(SIGPIPE, SIG_IGN, 0) == -1 ||
+	    set_one_signal_handler(SIGUSR1, stats_handler, 0) == -1 )
 		return -1;
-
+	printf("Sucessfully registered signal Handlers : %d \n", getpid());
 	fuse_instance = se;
 	return 0;
 }
@@ -71,5 +98,5 @@ void fuse_remove_signal_handlers(struct fuse_session *se)
 	set_one_signal_handler(SIGINT, exit_handler, 1);
 	set_one_signal_handler(SIGTERM, exit_handler, 1);
 	set_one_signal_handler(SIGPIPE, SIG_IGN, 1);
+	set_one_signal_handler(SIGUSR1, stats_handler, 1);
 }
-

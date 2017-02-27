@@ -25,7 +25,7 @@ struct fuse_session *fuse_session_new(void)
 		return NULL;
 	}
 	memset(se, 0, sizeof(*se));
-
+	pthread_spin_init(&se->lock, PTHREAD_PROCESS_PRIVATE); /*For array*/
 	return se;
 }
 

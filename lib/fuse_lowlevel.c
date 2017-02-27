@@ -23,6 +23,7 @@
 #include <errno.h>
 #include <assert.h>
 #include <sys/file.h>
+#include <time.h>
 
 #ifndef F_LINUX_SPECIFIC_BASE
 #define F_LINUX_SPECIFIC_BASE       1024
@@ -46,6 +47,43 @@ struct fuse_pollhandle {
 };
 
 static size_t pagesize;
+
+void populate_time(fuse_req_t req) {
+	struct timespec *ts1, *ts2;
+	struct fuse_chan *ch;
+	struct fuse_session *se;
+	
+	ts1 = &(req->ts1);
+	ts2 = &(req->ts2);
+	ch = req->ch;
+	se = ch->se;
+/*        long time =
+           (ts2->tv_sec*1000000 + ts2->tv_nsec/1000) -
+           (ts1->tv_sec*1000000 + ts1->tv_nsec/1000); */
+	long time =
+		(ts2->tv_sec*1000000000 + ts2->tv_nsec) -
+		(ts1->tv_sec*1000000000 + ts1->tv_nsec);
+	
+	pthread_spin_lock(&se->lock); /*lock*/
+        int i;
+        for (i=1; i<33; i++){
+                if(time>>i == 0){
+                	se->processing[req->opcode][i-1] +=1;
+			pthread_spin_unlock(&se->lock); /*unlock*/
+			return ;
+                }
+        }
+	se->processing[req->opcode][32] +=1;
+	pthread_spin_unlock(&se->lock); /*unlock*/
+}
+
+void generate_start_time(fuse_req_t req) {
+	clock_gettime(CLOCK_MONOTONIC, &(req->ts1));
+}
+
+void generate_end_time(fuse_req_t req) {
+	clock_gettime(CLOCK_MONOTONIC, &(req->ts2));
+}
 
 static __attribute__((constructor)) void fuse_ll_init_pagesize(void)
 {
@@ -123,6 +161,7 @@ static void destroy_req(fuse_req_t req)
 	pthread_mutex_destroy(&req->lock);
 	free(req);
 }
+
 
 void fuse_free_req(fuse_req_t req)
 {
@@ -374,6 +413,9 @@ static int send_reply_ok(fuse_req_t req, const void *arg, size_t argsize)
 
 int fuse_reply_err(fuse_req_t req, int err)
 {
+//	clock_gettime(CLOCK_MONOTONIC, &(req->ts2)); /*Track the completion of req*/
+//	populate_time(&(req->ts1), &(req->ts2), req);    /*Add the diff to session*/
+
 	return send_reply(req, -err, NULL, 0);
 }
 
@@ -455,6 +497,9 @@ int fuse_reply_entry(fuse_req_t req, const struct fuse_entry_param *e)
 	if (!e->ino && req->f->conn.proto_minor < 4)
 		return fuse_reply_err(req, ENOENT);
 
+//	clock_gettime(CLOCK_MONOTONIC, &(req->ts2)); /*Track the completion of req*/
+//	populate_time(&(req->ts1), &(req->ts2), req);    /*Add the diff to session*/
+
 	memset(&arg, 0, sizeof(arg));
 	fill_entry(&arg, e);
 	return send_reply_ok(req, &arg, size);
@@ -468,6 +513,9 @@ int fuse_reply_create(fuse_req_t req, const struct fuse_entry_param *e,
 		FUSE_COMPAT_ENTRY_OUT_SIZE : sizeof(struct fuse_entry_out);
 	struct fuse_entry_out *earg = (struct fuse_entry_out *) buf;
 	struct fuse_open_out *oarg = (struct fuse_open_out *) (buf + entrysize);
+
+//	clock_gettime(CLOCK_MONOTONIC, &(req->ts2)); /*Track the completion of req*/
+//	populate_time(&(req->ts1), &(req->ts2), req);    /*Add the diff to session*/
 
 	memset(buf, 0, sizeof(buf));
 	fill_entry(earg, e);
@@ -483,6 +531,9 @@ int fuse_reply_attr(fuse_req_t req, const struct stat *attr,
 	size_t size = req->f->conn.proto_minor < 9 ?
 		FUSE_COMPAT_ATTR_OUT_SIZE : sizeof(arg);
 
+//	clock_gettime(CLOCK_MONOTONIC, &(req->ts2)); /*Track the completion of req*/
+//	populate_time(&(req->ts1), &(req->ts2), req);    /*Add the diff to session*/
+
 	memset(&arg, 0, sizeof(arg));
 	arg.attr_valid = calc_timeout_sec(attr_timeout);
 	arg.attr_valid_nsec = calc_timeout_nsec(attr_timeout);
@@ -493,12 +544,18 @@ int fuse_reply_attr(fuse_req_t req, const struct stat *attr,
 
 int fuse_reply_readlink(fuse_req_t req, const char *linkname)
 {
+//	clock_gettime(CLOCK_MONOTONIC, &(req->ts2)); /*Track the completion of req*/
+//	populate_time(&(req->ts1), &(req->ts2), req);    /*Add the diff to session*/
+
 	return send_reply_ok(req, linkname, strlen(linkname));
 }
 
 int fuse_reply_open(fuse_req_t req, const struct fuse_file_info *f)
 {
 	struct fuse_open_out arg;
+
+//	clock_gettime(CLOCK_MONOTONIC, &(req->ts2)); /*Track the completion of req*/
+//	populate_time(&(req->ts1), &(req->ts2), req);    /*Add the diff to session*/
 
 	memset(&arg, 0, sizeof(arg));
 	fill_open(&arg, f);
@@ -508,6 +565,9 @@ int fuse_reply_open(fuse_req_t req, const struct fuse_file_info *f)
 int fuse_reply_write(fuse_req_t req, size_t count)
 {
 	struct fuse_write_out arg;
+	
+//	clock_gettime(CLOCK_MONOTONIC, &(req->ts2)); /*Track the completion of req*/
+//	populate_time(&(req->ts1), &(req->ts2), req);    /*Add the diff to session*/
 
 	memset(&arg, 0, sizeof(arg));
 	arg.size = count;
@@ -517,6 +577,9 @@ int fuse_reply_write(fuse_req_t req, size_t count)
 
 int fuse_reply_buf(fuse_req_t req, const char *buf, size_t size)
 {
+//	clock_gettime(CLOCK_MONOTONIC, &(req->ts2)); /*Track the completion of req*/
+//	populate_time(&(req->ts1), &(req->ts2), req);    /*Add the diff to session*/
+
 	return send_reply_ok(req, buf, size);
 }
 
@@ -671,11 +734,13 @@ static int fuse_send_data_iov(struct fuse_ll *f, struct fuse_chan *ch,
 	size_t headerlen;
 	struct fuse_bufvec pipe_buf = FUSE_BUFVEC_INIT(len);
 
-	if (f->broken_splice_nonblock)
+	if (f->broken_splice_nonblock) {
 		goto fallback;
+	}
 
-	if (flags & FUSE_BUF_NO_SPLICE)
+	if (flags & FUSE_BUF_NO_SPLICE) {
 		goto fallback;
+	}
 
 	total_fd_size = 0;
 	for (idx = buf->idx; idx < buf->count; idx++) {
@@ -685,17 +750,18 @@ static int fuse_send_data_iov(struct fuse_ll *f, struct fuse_chan *ch,
 				total_fd_size -= buf->off;
 		}
 	}
-	if (total_fd_size < 2 * pagesize)
+	if (total_fd_size < 2 * pagesize) {
 		goto fallback;
+	}
 
 	if (f->conn.proto_minor < 14 ||
-	    !(f->conn.want & FUSE_CAP_SPLICE_WRITE))
+	    !(f->conn.want & FUSE_CAP_SPLICE_WRITE)) {
 		goto fallback;
-
+	}
 	llp = fuse_ll_get_pipe(f);
-	if (llp == NULL)
+	if (llp == NULL) {
 		goto fallback;
-
+	}
 
 	headerlen = iov_length(iov, iov_count);
 
@@ -716,8 +782,9 @@ static int fuse_send_data_iov(struct fuse_ll *f, struct fuse_chan *ch,
 			}
 			llp->size = res;
 		}
-		if (llp->size < pipesize)
+		if (llp->size < pipesize) {
 			goto fallback;
+		}
 	}
 
 
@@ -870,6 +937,9 @@ int fuse_reply_data(fuse_req_t req, struct fuse_bufvec *bufv,
 	struct iovec iov[2];
 	struct fuse_out_header out;
 	int res;
+
+//	clock_gettime(CLOCK_MONOTONIC, &(req->ts2)); /*Track the completion of req*/
+//	populate_time(&(req->ts1), &(req->ts2), req);    /*Add the diff to session*/
 
 	iov[0].iov_base = &out;
 	iov[0].iov_len = sizeof(struct fuse_out_header);
@@ -1882,7 +1952,7 @@ static void do_init(fuse_req_t req, fuse_ino_t nodeid, const void *inarg)
 	memset(&outarg, 0, sizeof(outarg));
 	outarg.major = FUSE_KERNEL_VERSION;
 	outarg.minor = FUSE_KERNEL_MINOR_VERSION;
-
+	
 	if (arg->major < 7) {
 		fprintf(stderr, "fuse: unsupported protocol version: %u.%u\n",
 			arg->major, arg->minor);
@@ -1946,6 +2016,7 @@ static void do_init(fuse_req_t req, fuse_ino_t nodeid, const void *inarg)
 			f->conn.want |= FUSE_CAP_SPLICE_READ;
 #endif
 	}
+	
 	if (req->f->conn.proto_minor >= 18)
 		f->conn.capable |= FUSE_CAP_IOCTL_DIR;
 
@@ -2059,7 +2130,7 @@ static void do_init(fuse_req_t req, fuse_ino_t nodeid, const void *inarg)
 		outargsize = FUSE_COMPAT_INIT_OUT_SIZE;
 	else if (arg->minor < 23)
 		outargsize = FUSE_COMPAT_22_INIT_OUT_SIZE;
-
+	
 	send_reply_ok(req, &outarg, outargsize);
 }
 
@@ -2537,10 +2608,13 @@ void fuse_session_process_buf(struct fuse_session *se,
 	}
 
 	req->unique = in->unique;
+	req->opcode = in->opcode; /*To track the req along with the opcode*/
 	req->ctx.uid = in->uid;
 	req->ctx.gid = in->gid;
 	req->ctx.pid = in->pid;
 	req->ch = fuse_chan_get(ch);
+
+//	clock_gettime(CLOCK_MONOTONIC, &(req->ts1)); /*Start of the req creation*/
 
 	err = EIO;
 	if (!f->got_init) {
@@ -2740,6 +2814,7 @@ void fuse_session_destroy(struct fuse_session *se)
 {
 	fuse_ll_destroy(se->f);
 	fuse_chan_put(se->ch);
+	pthread_spin_destroy(&se->lock);
 	free(se);
 }
 
@@ -2864,7 +2939,8 @@ int fuse_session_receive_buf(struct fuse_session *se, struct fuse_buf *buf,
 }
 #endif
 
-#define MIN_BUFSIZE 0x21000
+/*#define MIN_BUFSIZE 0x21000 */
+#define MIN_BUFSIZE 0x4001000
 
 struct fuse_session *fuse_lowlevel_new(struct fuse_args *args,
 				       const struct fuse_lowlevel_ops *op,
@@ -2891,7 +2967,7 @@ struct fuse_session *fuse_lowlevel_new(struct fuse_args *args,
 	f->atomic_o_trunc = 0;
 	f->bufsize = getpagesize() + 0x1000;
 	f->bufsize = f->bufsize < MIN_BUFSIZE ? MIN_BUFSIZE : f->bufsize;
-
+	
 	list_init_req(&f->list);
 	list_init_req(&f->interrupts);
 	list_init_nreq(&f->notify_list);

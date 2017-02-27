@@ -125,7 +125,9 @@ FUSE_3.0 {
 		fuse_lowlevel_notify_delete;
 		fuse_fs_flock;
 		fuse_fs_fallocate;
-
+		generate_start_time;
+		generate_end_time;
+		populate_time;
 	local:
 		*;
 };
