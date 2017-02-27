@@ -38,7 +38,7 @@ static void stats_handler(int sig)
 	se = fuse_instance;
 	statsDir = fuse_session_statsDir(se);
 	if (!statsDir) {
-		printf("No Stats Sirectory to copy the statistics\n");
+		printf("No Stats Directory to copy the statistics\n");
 		return ;
 	}
 	statsFile = (char *)malloc(4096 * sizeof(char));
@@ -61,6 +61,32 @@ static void stats_handler(int sig)
 		free(statsFile);
 	if (fp)
 		fclose(fp);
+	/* print the argument values to screen (remove soon after) */
+	printf("max_write : %u\n", se->f->conn.max_write);
+	printf("max_readahead : %u\n", se->f->conn.max_readahead);
+	printf("max_background : %u\n", se->f->conn.max_background);
+	printf("congestion_threshold : %u\n", se->f->conn.congestion_threshold);
+	printf("async_read : %u\n", se->f->conn.async_read);
+	printf("atomic_o_trunc : %d\n", se->f->atomic_o_trunc);
+	printf("big_writes : %d\n", se->f->big_writes);
+	printf("no_remote_flock : %d\n", se->f->no_remote_flock);
+	printf("no_remote_posix_lock : %d\n", se->f->no_remote_posix_lock);
+	printf("splice_move : %d\n", se->f->splice_move);
+	printf("no_splice_move : %d\n", se->f->no_splice_move);
+	printf("splice_read : %d\n", se->f->splice_read);
+	printf("no_splice_read : %d\n", se->f->no_splice_read);
+	printf("splice_write : %d\n", se->f->splice_write);
+	printf("no_splice_write : %d\n", se->f->no_splice_write);
+	printf("auto_inval_data : %d\n", se->f->auto_inval_data);
+	printf("no_auto_inval_data : %d\n", se->f->no_auto_inval_data);
+	printf("no_readdirplus : %d\n", se->f->no_readdirplus);
+	printf("no_readdirplus_auto : %d\n", se->f->no_readdirplus_auto);
+	printf("async_dio : %d\n", se->f->async_dio);
+	printf("no_async_dio : %d\n", se->f->no_async_dio);
+	printf("writeback_cache : %d\n", se->f->writeback_cache);
+	printf("no_writeback_cache : %d\n", se->f->no_writeback_cache);
+	printf("clone_fd : %d\n", se->f->clone_fd);
+
 	pthread_spin_unlock(&se->lock);
 }
 
