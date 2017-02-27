@@ -4687,7 +4687,32 @@ struct fuse *fuse_new(struct fuse_chan *ch, struct fuse_args *args,
 	if (fuse_opt_parse(args, &f->conf, fuse_lib_opts,
 			   fuse_lib_opt_proc) == -1)
 		goto out_free_fs;
-
+	//=======================
+	/*
+	printf("FUSE High level API misc options :\n");
+	printf("help : %d\n", f->conf.help);
+	printf("debug : %d\n", f->conf.debug);
+	printf("hard_remove : %d\n", f->conf.hard_remove);
+	printf("use_ino : %d\n", f->conf.use_ino);
+	printf("readdir_ino : %d\n", f->conf.readdir_ino);
+	printf("direct_io : %d\n", f->conf.direct_io);
+	printf("kernel_cache : %d\n", f->conf.kernel_cache);
+	printf("auto_cache : %d\n", f->conf.auto_cache);
+	printf("umask : %u\n", f->conf.umask);
+	printf("uid : %u\n", f->conf.uid);
+	printf("gid : %u\n", f->conf.gid);
+	printf("entry_timeout : %f\n", f->conf.entry_timeout);
+	printf("attr_timeout : %f\n", f->conf.attr_timeout);
+	printf("ac_attr_timeout : %f\n", f->conf.ac_attr_timeout);
+	printf("negative_timeout : %f\n", f->conf.negative_timeout);
+	printf("noforget : \n");
+	printf("remember : %d\n", f->conf.remember);
+	printf("nopath : %d\n", f->conf.nopath);
+	printf("intr : %d\n", f->conf.intr);
+	printf("intr_signal : %d\n", f->conf.intr_signal);
+	printf("modules : %s\n", f->conf.modules);
+	*/
+	//=======================
 	if (f->conf.modules) {
 		char *module;
 		char *next;

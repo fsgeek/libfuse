@@ -242,7 +242,6 @@ restart:
 	}
 
 	buf->size = res;
-
 	return res;
 }
 
@@ -2564,6 +2563,7 @@ void fuse_session_process_buf(struct fuse_session *se,
 	int err;
 	int res;
 
+	printf("size of write header and fuse write in structure is : %zu\n", write_header_size);
 	if (buf->flags & FUSE_BUF_IS_FD) {
 		if (buf->size < tmpbuf.buf[0].size)
 			tmpbuf.buf[0].size = buf->size;
