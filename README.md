@@ -33,7 +33,7 @@ recommend to use [Meson](http://mesonbuild.com/) and
 [Ninja](https://ninja-build.org).  After extracting the libfuse
 tarball, create a (temporary) build directory and run Meson:
 
-    $ md build; cd build
+    $ mkdir build; cd build
     $ meson ..
 
 Normally, the default build options will work fine. If you
