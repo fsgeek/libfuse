@@ -15,6 +15,11 @@ struct fuse_req {
 	struct fuse_session *se;
 	uint64_t unique;
 	int ctr;
+#if !defined(OMIT_SBU_FSL_CODE)
+	int opcode;
+	struct timespec ts1;
+	struct timespec ts2;
+#endif // SBU_FSL_INSTRUMENT
 	pthread_mutex_t lock;
 	struct fuse_ctx ctx;
 	struct fuse_chan *ch;
@@ -64,6 +69,12 @@ struct fuse_session {
 	struct fuse_notify_req notify_list;
 	size_t bufsize;
 	int error;
+#if !defined(OMIT_SBU_FSL_CODE)
+	pthread_spinlock_t fsl_lock;
+	// TODO: why the magic numbers here?
+	long long unsigned int processing[46][33];
+	char *statsDir;
+#endif // SBU_FSL_INSTRUMENT
 };
 
 struct fuse_chan {

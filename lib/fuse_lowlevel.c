@@ -26,6 +26,7 @@
 #include <errno.h>
 #include <assert.h>
 #include <sys/file.h>
+#include <time.h>
 
 #ifndef F_LINUX_SPECIFIC_BASE
 #define F_LINUX_SPECIFIC_BASE       1024
@@ -46,6 +47,43 @@ struct fuse_pollhandle {
 	uint64_t kh;
 	struct fuse_session *se;
 };
+
+#if !defined(OMIT_SBU_FSL_CODE)
+void populate_time(fuse_req_t req) {
+	struct timespec *ts1, *ts2;
+	struct fuse_session *se;
+	
+	ts1 = &(req->ts1);
+	ts2 = &(req->ts2);
+	se = req->se;
+/*        long time =
+           (ts2->tv_sec*1000000 + ts2->tv_nsec/1000) -
+           (ts1->tv_sec*1000000 + ts1->tv_nsec/1000); */
+	long time =
+		(ts2->tv_sec*1000000000 + ts2->tv_nsec) -
+		(ts1->tv_sec*1000000000 + ts1->tv_nsec);
+	
+	pthread_spin_lock(&se->fsl_lock); /*lock*/
+        int i;
+        for (i=1; i<33; i++){
+                if(time>>i == 0){
+                	se->processing[req->opcode][i-1] +=1;
+			pthread_spin_unlock(&se->fsl_lock); /*unlock*/
+			return ;
+                }
+        }
+	se->processing[req->opcode][32] +=1;
+	pthread_spin_unlock(&se->fsl_lock); /*unlock*/
+}
+
+void generate_start_time(fuse_req_t req) {
+	clock_gettime(CLOCK_MONOTONIC, &(req->ts1));
+}
+
+void generate_end_time(fuse_req_t req) {
+	clock_gettime(CLOCK_MONOTONIC, &(req->ts2));
+}
+#endif // OMIT_SBU_FSL_CODE
 
 static size_t pagesize;
 
@@ -2475,6 +2513,9 @@ void fuse_session_process_buf_int(struct fuse_session *se,
 	}
 
 	req->unique = in->unique;
+#if !defined(OMIT_SBU_FSL_CODE)
+	req->opcode = in->opcode;
+#endif // OMIT_SBU_FSL_CODE
 	req->ctx.uid = in->uid;
 	req->ctx.gid = in->gid;
 	req->ctx.pid = in->pid;
@@ -2597,6 +2638,9 @@ void fuse_session_destroy(struct fuse_session *se)
 		fuse_ll_pipe_free(llp);
 	pthread_key_delete(se->pipe_key);
 	pthread_mutex_destroy(&se->lock);
+#if !defined(OMIT_SBU_FSL_CODE)
+	pthread_spin_destroy(&se->fsl_lock);
+#endif // OMIT_SBU_FSL_CODE
 	free(se->cuse_data);
 	if (se->fd != -1)
 		close(se->fd);
@@ -2845,6 +2889,10 @@ struct fuse_session *fuse_session_new(struct fuse_args *args,
 		goto out5;
 	}
 
+#if !defined(OMIT_SBU_FSL_CODE)
+	pthread_spin_init(&se->fsl_lock, PTHREAD_PROCESS_PRIVATE);
+#endif // OMIT_SBU_FSL_CODE
+
 	memcpy(&se->op, op, op_size);
 	se->owner = getuid();
 	se->userdata = userdata;
@@ -2992,3 +3040,21 @@ int fuse_session_exited(struct fuse_session *se)
 {
 	return se->exited;
 }
+
+
+#if !defined(OMIT_SBU_FSL_CODE)
+void fuse_session_add_statsDir(struct fuse_session *se, char *statsdir)
+{
+	se->statsDir = statsdir;
+}
+
+void fuse_session_remove_statsDir(struct fuse_session *se)
+{
+	se->statsDir = NULL;
+}
+
+char *fuse_session_statsDir(struct fuse_session *se)
+{
+	return se->statsDir;
+}
+#endif // OMIT_SBU_FSL_CODE
