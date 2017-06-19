@@ -76,8 +76,9 @@ if not cc.compiles(code, args: [ '-O0', '-Werror=unused-result' ])
 endif
 
 # current_build_dir() contains config.h
-include_dirs = include_directories('include', 'lib',
-                                   meson.current_build_dir())
+include_dirs = include_directories('include', 'lib', '.')
+# for some reason this throws an error if I use it instead of .
+#                                   meson.current_build_dir())
 
 # Common dependencies
 thread_dep = dependency('threads') 
