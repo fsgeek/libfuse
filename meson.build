@@ -75,7 +75,6 @@ if not cc.compiles(code, args: [ '-O0', '-Werror=unused-result' ])
      message('Compiler warns about unused result even when casting to void')
      add_global_arguments('-Wno-unused-result', language: 'c')
 endif
-
 # '.' will refer to current build directory, which contains config.h
 include_dirs = include_directories('include', 'lib', '.')
 
