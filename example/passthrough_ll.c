@@ -13,7 +13,11 @@
  * just "passing through" all requests to the corresponding user-space
  * libc functions. In contrast to passthrough.c and passthrough_fh.c,
  * this implementation ises the low-level API. Its performance should
- * be the least bad among the three.
+ * be the least bad among the three, but many operations are not
+ * implemented. In particular, it is not possible to remove files (or
+ * directories) because the code necessary to defer actual removal
+ * until the file is not opened anymore would make the example much
+ * more complicated.
  *
  * Compile with:
  *
@@ -42,6 +46,19 @@
 #include <assert.h>
 #include <errno.h>
 #include <err.h>
+
+/* We are re-using pointers to our `struct lo_inode` and `struct
+   lo_dirp` elements as inodes. This means that we require uintptr_t
+   and fuse_ino_t to have the same size. The following incantation
+   defines a compile time assert for this requirement. */
+#if defined(__GNUC__) && (__GNUC__ > 4 || __GNUC__ == 4 && __GNUC_MINOR__ >= 6) && !defined __cplusplus
+_Static_assert(sizeof(fuse_ino_t) == sizeof(uintptr_t), "fuse: off_t must be 64bit");
+#else
+struct _uintptr_to_must_hold_fuse_ino_t_dummy_struct \
+	{ unsigned _uintptr_to_must_hold_fuse_ino_t:
+			((sizeof(fuse_ino_t) == sizeof(uintptr_t)) ? 1 : -1); };
+#endif
+
 
 /* Compat stuff.  Doesn't make it work, just makes it compile. */
 #ifndef HAVE_FSTATAT
@@ -120,6 +137,13 @@ static int lo_fd(fuse_req_t req, fuse_ino_t ino)
 static bool lo_debug(fuse_req_t req)
 {
 	return lo_data(req)->debug != 0;
+}
+
+static void lo_init(void *userdata,
+		    struct fuse_conn_info *conn)
+{
+	(void) userdata;
+	conn->want |= FUSE_CAP_EXPORT_SUPPORT;
 }
 
 static void lo_getattr(fuse_req_t req, fuse_ino_t ino,
@@ -405,8 +429,29 @@ static void lo_releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info 
 	fuse_reply_err(req, 0);
 }
 
+static void lo_create(fuse_req_t req, fuse_ino_t parent, const char *name,
+		      mode_t mode, struct fuse_file_info *fi)
+{
+	int fd;
+	struct fuse_entry_param e;
+	int err;
+
+	fd = openat(lo_fd(req, parent), name,
+		    (fi->flags | O_CREAT) & ~O_NOFOLLOW, mode);
+	if (fd == -1)
+		return (void) fuse_reply_err(req, errno);
+
+	fi->fh = fd;
+
+	err = lo_do_lookup(req, parent, name, &e);
+	if (err)
+		fuse_reply_err(req, err);
+	else
+		fuse_reply_create(req, &e, fi);
+}
+
 static void lo_open(fuse_req_t req, fuse_ino_t ino,
-			  struct fuse_file_info *fi)
+		    struct fuse_file_info *fi)
 {
 	int fd;
 	char buf[64];
@@ -429,7 +474,7 @@ static void lo_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi
 }
 
 static void lo_read(fuse_req_t req, fuse_ino_t ino, size_t size,
-			  off_t offset, struct fuse_file_info *fi)
+		    off_t offset, struct fuse_file_info *fi)
 {
 	struct fuse_bufvec buf = FUSE_BUFVEC_INIT(size);
 
@@ -442,7 +487,27 @@ static void lo_read(fuse_req_t req, fuse_ino_t ino, size_t size,
 	fuse_reply_data(req, &buf, FUSE_BUF_SPLICE_MOVE);
 }
 
+static void lo_write_buf(fuse_req_t req, fuse_ino_t ino,
+			 struct fuse_bufvec *in_buf, off_t off,
+			 struct fuse_file_info *fi)
+{
+	(void) ino;
+	ssize_t res;
+	struct fuse_bufvec out_buf = FUSE_BUFVEC_INIT(fuse_buf_size(in_buf));
+
+	out_buf.buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
+	out_buf.buf[0].fd = fi->fh;
+	out_buf.buf[0].pos = off;
+
+	res = fuse_buf_copy(&out_buf, in_buf, 0);
+	if(res < 0)
+		fuse_reply_err(req, -res);
+	else
+		fuse_reply_write(req, (size_t) res);
+}
+
 static struct fuse_lowlevel_ops lo_oper = {
+	.init		= lo_init,
 	.lookup		= lo_lookup,
 	.forget		= lo_forget,
 	.getattr	= lo_getattr,
@@ -451,9 +516,11 @@ static struct fuse_lowlevel_ops lo_oper = {
 	.readdir	= lo_readdir,
 	.readdirplus	= lo_readdirplus,
 	.releasedir	= lo_releasedir,
+	.create		= lo_create,
 	.open		= lo_open,
 	.release	= lo_release,
 	.read		= lo_read,
+	.write_buf      = lo_write_buf
 };
 
 int main(int argc, char *argv[])

@@ -1719,7 +1719,7 @@ int fuse_fs_read_buf(struct fuse_fs *fs, const char *path,
 				(unsigned long long) fi->fh,
 				fuse_buf_size(*bufp),
 				(unsigned long long) off);
-		if (res >= 0 && fuse_buf_size(*bufp) > (int) size)
+		if (res >= 0 && fuse_buf_size(*bufp) > size)
 			fprintf(stderr, "fuse: read too many bytes\n");
 
 		if (res < 0)
@@ -1734,19 +1734,43 @@ int fuse_fs_read_buf(struct fuse_fs *fs, const char *path,
 int fuse_fs_read(struct fuse_fs *fs, const char *path, char *mem, size_t size,
 		 off_t off, struct fuse_file_info *fi)
 {
-	int res;
-	struct fuse_bufvec *buf = NULL;
+	fuse_get_context()->private_data = fs->user_data;
+	if (fs->op.read || fs->op.read_buf) {
+		int res;
 
-	res = fuse_fs_read_buf(fs, path, &buf, size, off, fi);
-	if (res == 0) {
-		struct fuse_bufvec dst = FUSE_BUFVEC_INIT(size);
+		if (fs->debug)
+			fprintf(stderr,
+				"read[%llu] %zu bytes from %llu flags: 0x%x\n",
+				(unsigned long long) fi->fh,
+				size, (unsigned long long) off, fi->flags);
 
-		dst.buf[0].mem = mem;
-		res = fuse_buf_copy(&dst, buf, 0);
+		if (fs->op.read_buf) {
+			struct fuse_bufvec *buf = NULL;
+
+			res = fs->op.read_buf(path, &buf, size, off, fi);
+			if (res == 0) {
+				struct fuse_bufvec dst = FUSE_BUFVEC_INIT(size);
+
+				dst.buf[0].mem = mem;
+				res = fuse_buf_copy(&dst, buf, 0);
+			}
+			fuse_free_buf(buf);
+		} else {
+			res = fs->op.read(path, mem, size, off, fi);
+		}
+
+		if (fs->debug && res >= 0)
+			fprintf(stderr, "   read[%llu] %u bytes from %llu\n",
+				(unsigned long long) fi->fh,
+				res,
+				(unsigned long long) off);
+		if (res >= 0 && res > (int) size)
+			fprintf(stderr, "fuse: read too many bytes\n");
+
+		return res;
+	} else {
+		return -ENOSYS;
 	}
-	fuse_free_buf(buf);
-
-	return res;
 }
 
 int fuse_fs_write_buf(struct fuse_fs *fs, const char *path,
@@ -4586,6 +4610,11 @@ struct fuse *fuse_new(struct fuse_args *args,
 		goto out;
 	}
 
+	f->conf.entry_timeout = 1.0;
+	f->conf.attr_timeout = 1.0;
+	f->conf.negative_timeout = 0.0;
+	f->conf.intr_signal = FUSE_DEFAULT_INTR_SIGNAL;
+
 	/* Parse options */
 	if (fuse_opt_parse(args, &f->conf, fuse_lib_opts,
 			   fuse_lib_opt_proc) == -1)
@@ -4623,11 +4652,6 @@ struct fuse *fuse_new(struct fuse_args *args,
 		llop.getlk = NULL;
 		llop.setlk = NULL;
 	}
-
-	f->conf.entry_timeout = 1.0;
-	f->conf.attr_timeout = 1.0;
-	f->conf.negative_timeout = 0.0;
-	f->conf.intr_signal = FUSE_DEFAULT_INTR_SIGNAL;
 
 	f->pagesize = getpagesize();
 	init_list_head(&f->partial_slabs);

@@ -177,6 +177,9 @@ struct fuse_config {
 	 * field in the readdir(2) function. The filesystem does not
 	 * have to guarantee uniqueness, however some applications
 	 * rely on this value being unique for the whole filesystem.
+	 *
+	 * Note that this does *not* affect the inode that libfuse 
+	 * and the kernel use internally (also called the "nodeid").
 	 */
 	int use_ino;
 
@@ -292,7 +295,9 @@ struct fuse_operations {
 	 *
 	 * Similar to stat().  The 'st_dev' and 'st_blksize' fields are
 	 * ignored. The 'st_ino' field is ignored except if the 'use_ino'
-	 * mount option is given.
+	 * mount option is given. In that case it is passed to userspace,
+	 * but libfuse and the kernel will still assign a different
+	 * inode for internal use (called the "nodeid").
 	 *
 	 * `fi` will always be NULL if the file is not currenly open, but
 	 * may also be NULL if the file is open.
@@ -334,8 +339,16 @@ struct fuse_operations {
 	/** Create a symbolic link */
 	int (*symlink) (const char *, const char *);
 
-	/** Rename a file */
-	int (*rename) (const char *, const char *, unsigned int);
+	/** Rename a file
+	 *
+	 * *flags* may be `RENAME_EXCHANGE` or `RENAME_NOREPLACE`. If
+	 * RENAME_NOREPLACE is specified, the filesystem must not
+	 * overwrite *newname* if it exists and return an error
+	 * instead. If `RENAME_EXCHANGE` is specified, the filesystem
+	 * must atomically exchange the two files, i.e. both must
+	 * exist and neither may be deleted.
+	 */
+	int (*rename) (const char *, const char *, unsigned int flags);
 
 	/** Create a hard link to a file */
 	int (*link) (const char *, const char *);
@@ -512,9 +525,10 @@ struct fuse_operations {
 	/**
 	 * Initialize filesystem
 	 *
-	 * The return value will passed in the private_data field of
-	 * fuse_context to all file operations and as a parameter to the
-	 * destroy() method.
+	 * The return value will passed in the `private_data` field of
+	 * `struct fuse_context` to all file operations, and as a
+	 * parameter to the destroy() method. It overrides the initial
+	 * value provided to fuse_main() / fuse_new().
 	 */
 	void *(*init) (struct fuse_conn_info *conn,
 		       struct fuse_config *cfg);
@@ -524,7 +538,7 @@ struct fuse_operations {
 	 *
 	 * Called on filesystem exit.
 	 */
-	void (*destroy) (void *);
+	void (*destroy) (void *private_data);
 
 	/**
 	 * Check file access permissions
@@ -762,17 +776,19 @@ struct fuse_context {
  * @param argc the argument counter passed to the main() function
  * @param argv the argument vector passed to the main() function
  * @param op the file system operation
- * @param user_data user data supplied in the context during the init() method
+ * @param private_data Initial value for the `private_data`
+ *            field of `struct fuse_context`. May be overriden by the
+ *            `struct fuse_operations.init` handler.
  * @return 0 on success, nonzero on failure
  *
  * Example usage, see hello.c
  */
 /*
   int fuse_main(int argc, char *argv[], const struct fuse_operations *op,
-  void *user_data);
+  void *private_data);
 */
-#define fuse_main(argc, argv, op, user_data)				\
-	fuse_main_real(argc, argv, op, sizeof(*(op)), user_data)
+#define fuse_main(argc, argv, op, private_data)				\
+	fuse_main_real(argc, argv, op, sizeof(*(op)), private_data)
 
 /* ----------------------------------------------------------- *
  * More detailed API					       *
@@ -800,11 +816,13 @@ struct fuse_context {
  * @param args argument vector
  * @param op the filesystem operations
  * @param op_size the size of the fuse_operations structure
- * @param user_data user data supplied in the context during the init() method
+ * @param private_data Initial value for the `private_data`
+ *            field of `struct fuse_context`. May be overriden by the
+ *            `struct fuse_operations.init` handler.
  * @return the created FUSE handle
  */
 struct fuse *fuse_new(struct fuse_args *args, const struct fuse_operations *op,
-		      size_t op_size, void *user_data);
+		      size_t op_size, void *private_data);
 
 /**
  * Mount a FUSE file system.
@@ -939,7 +957,7 @@ int fuse_interrupted(void);
  * Do not call this directly, use fuse_main()
  */
 int fuse_main_real(int argc, char *argv[], const struct fuse_operations *op,
-		   size_t op_size, void *user_data);
+		   size_t op_size, void *private_data);
 
 /**
  * Start the cleanup thread when using option "remember".
@@ -1077,11 +1095,13 @@ int fuse_notify_poll(struct fuse_pollhandle *ph);
  *
  * @param op the filesystem operations
  * @param op_size the size of the fuse_operations structure
- * @param user_data user data supplied in the context during the init() method
+ * @param private_data Initial value for the `private_data`
+ *            field of `struct fuse_context`. May be overriden by the
+ *            `struct fuse_operations.init` handler.
  * @return a new filesystem object
  */
 struct fuse_fs *fuse_fs_new(const struct fuse_operations *op, size_t op_size,
-			    void *user_data);
+			    void *private_data);
 
 /**
  * Factory for creating filesystem objects

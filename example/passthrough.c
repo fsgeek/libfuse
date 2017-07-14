@@ -52,6 +52,18 @@ static void *xmp_init(struct fuse_conn_info *conn,
 {
 	(void) conn;
 	cfg->use_ino = 1;
+
+	/* Pick up changes from lower filesystem right away. This is
+	   also necessary for better hardlink support. When the kernel
+	   calls the unlink() handler, it does not know the inode of
+	   the to-be-removed entry and can therefore not invalidate
+	   the cache of the associated inode - resulting in an
+	   incorrect st_nlink value being reported for any remaining
+	   hardlinks to this inode. */
+	cfg->entry_timeout = 0;
+	cfg->attr_timeout = 0;
+	cfg->negative_timeout = 0;
+
 	return NULL;
 }
 
@@ -238,10 +250,12 @@ static int xmp_chown(const char *path, uid_t uid, gid_t gid,
 static int xmp_truncate(const char *path, off_t size,
 			struct fuse_file_info *fi)
 {
-	(void) fi;
 	int res;
 
-	res = truncate(path, size);
+	if (fi != NULL)
+		res = ftruncate(fi->fh, size);
+	else
+		res = truncate(path, size);
 	if (res == -1)
 		return -errno;
 
@@ -264,6 +278,19 @@ static int xmp_utimens(const char *path, const struct timespec ts[2],
 }
 #endif
 
+static int xmp_create(const char *path, mode_t mode,
+		      struct fuse_file_info *fi)
+{
+	int res;
+
+	res = open(path, fi->flags, mode);
+	if (res == -1)
+		return -errno;
+
+	fi->fh = res;
+	return 0;
+}
+
 static int xmp_open(const char *path, struct fuse_file_info *fi)
 {
 	int res;
@@ -272,7 +299,7 @@ static int xmp_open(const char *path, struct fuse_file_info *fi)
 	if (res == -1)
 		return -errno;
 
-	close(res);
+	fi->fh = res;
 	return 0;
 }
 
@@ -282,8 +309,11 @@ static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
 	int fd;
 	int res;
 
-	(void) fi;
-	fd = open(path, O_RDONLY);
+	if(fi == NULL)
+		fd = open(path, O_RDONLY);
+	else
+		fd = fi->fh;
+	
 	if (fd == -1)
 		return -errno;
 
@@ -291,7 +321,8 @@ static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
 	if (res == -1)
 		res = -errno;
 
-	close(fd);
+	if(fi == NULL)
+		close(fd);
 	return res;
 }
 
@@ -302,7 +333,11 @@ static int xmp_write(const char *path, const char *buf, size_t size,
 	int res;
 
 	(void) fi;
-	fd = open(path, O_WRONLY);
+	if(fi == NULL)
+		fd = open(path, O_WRONLY);
+	else
+		fd = fi->fh;
+	
 	if (fd == -1)
 		return -errno;
 
@@ -310,7 +345,8 @@ static int xmp_write(const char *path, const char *buf, size_t size,
 	if (res == -1)
 		res = -errno;
 
-	close(fd);
+	if(fi == NULL)
+		close(fd);
 	return res;
 }
 
@@ -327,11 +363,8 @@ static int xmp_statfs(const char *path, struct statvfs *stbuf)
 
 static int xmp_release(const char *path, struct fuse_file_info *fi)
 {
-	/* Just a stub.	 This method is optional and can safely be left
-	   unimplemented */
-
 	(void) path;
-	(void) fi;
+	close(fi->fh);
 	return 0;
 }
 
@@ -359,13 +392,18 @@ static int xmp_fallocate(const char *path, int mode,
 	if (mode)
 		return -EOPNOTSUPP;
 
-	fd = open(path, O_WRONLY);
+	if(fi == NULL)
+		fd = open(path, O_WRONLY);
+	else
+		fd = fi->fh;
+	
 	if (fd == -1)
 		return -errno;
 
 	res = -posix_fallocate(fd, offset, length);
 
-	close(fd);
+	if(fi == NULL)
+		close(fd);
 	return res;
 }
 #endif
@@ -427,6 +465,7 @@ static struct fuse_operations xmp_oper = {
 	.utimens	= xmp_utimens,
 #endif
 	.open		= xmp_open,
+	.create 	= xmp_create,
 	.read		= xmp_read,
 	.write		= xmp_write,
 	.statfs		= xmp_statfs,

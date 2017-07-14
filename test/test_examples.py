@@ -12,9 +12,8 @@ import pytest
 import stat
 import shutil
 import filecmp
+import time
 import errno
-import platform
-from distutils.version import LooseVersion
 from tempfile import NamedTemporaryFile
 from util import (wait_for_mount, umount, cleanup, base_cmdline,
                   safe_sleep, basename, fuse_test_marker)
@@ -62,8 +61,15 @@ def test_hello(tmpdir, name, options):
 
 @pytest.mark.parametrize("name", ('passthrough', 'passthrough_fh',
                                   'passthrough_ll'))
-@pytest.mark.parametrize("debug", (True, False))
-def test_passthrough(tmpdir, name, debug):
+@pytest.mark.parametrize("debug", (False, True))
+def test_passthrough(tmpdir, name, debug, capfd):
+    
+    # Avoid false positives from libfuse debug messages
+    if debug:
+        capfd.register_output(r'^   unique: [0-9]+, error: -[0-9]+ .+$',
+                              count=0)
+
+    is_ll = (name == 'passthrough_ll')
     mnt_dir = str(tmpdir.mkdir('mnt'))
     src_dir = str(tmpdir.mkdir('src'))
 
@@ -75,26 +81,32 @@ def test_passthrough(tmpdir, name, debug):
     mount_process = subprocess.Popen(cmdline)
     try:
         wait_for_mount(mount_process, mnt_dir)
-        work_dir = pjoin(mnt_dir, src_dir)
+        work_dir = mnt_dir + src_dir
 
-        subprocess.check_call([ os.path.join(basename, 'test', 'test_syscalls'),
-                    work_dir, ':' + src_dir ])
-
-        tst_write(work_dir)
-        tst_mkdir(work_dir)
-        tst_symlink(work_dir)
-        tst_mknod(work_dir)
-        if os.getuid() == 0:
-            tst_chown(work_dir)
-        # Underlying fs may not have full nanosecond resolution
-        tst_utimens(work_dir, ns_tol=1000)
-        tst_link(work_dir)
-        tst_readdir(work_dir)
         tst_statvfs(work_dir)
-        tst_truncate_path(work_dir)
-        tst_truncate_fd(work_dir)
-        tst_unlink(work_dir)
+        tst_readdir(src_dir, work_dir)
+        tst_open_read(src_dir, work_dir)
+        tst_open_write(src_dir, work_dir)
+        tst_create(work_dir)
         tst_passthrough(src_dir, work_dir)
+        if not is_ll:
+            tst_mkdir(work_dir)
+            tst_rmdir(src_dir, work_dir)
+            tst_unlink(src_dir, work_dir)
+            tst_symlink(work_dir)
+            if os.getuid() == 0:
+                tst_chown(work_dir)
+
+            # Underlying fs may not have full nanosecond resolution
+            tst_utimens(work_dir, ns_tol=1000)
+
+            tst_link(work_dir)
+            tst_truncate_path(work_dir)
+            tst_truncate_fd(work_dir)
+            tst_open_unlink(work_dir)
+
+            subprocess.check_call([ os.path.join(basename, 'test', 'test_syscalls'),
+                                    work_dir, ':' + src_dir ])
     except:
         cleanup(mnt_dir)
         raise
@@ -164,36 +176,6 @@ def test_null(tmpdir):
         umount(mount_process, mnt_file)
 
 
-@pytest.mark.parametrize("name",
-                         ('notify_inval_inode',
-                          'notify_store_retrieve'))
-@pytest.mark.parametrize("notify", (True, False))
-def test_notify1(tmpdir, name, notify):
-    mnt_dir = str(tmpdir)
-    cmdline = base_cmdline + \
-              [ pjoin(basename, 'example', name),
-                '-f', '--update-interval=1', mnt_dir ]
-    if not notify:
-        cmdline.append('--no-notify')
-    mount_process = subprocess.Popen(cmdline)
-    try:
-        wait_for_mount(mount_process, mnt_dir)
-        filename = pjoin(mnt_dir, 'current_time')
-        with open(filename, 'r') as fh:
-            read1 = fh.read()
-        safe_sleep(2)
-        with open(filename, 'r') as fh:
-            read2 = fh.read()
-        if notify:
-            assert read1 != read2
-        else:
-            assert read1 == read2
-    except:
-        cleanup(mnt_dir)
-        raise
-    else:
-        umount(mount_process, mnt_dir)
-
 @pytest.mark.parametrize("notify", (True, False))
 def test_notify_inval_entry(tmpdir, notify):
     mnt_dir = str(tmpdir)
@@ -226,21 +208,6 @@ def test_notify_inval_entry(tmpdir, notify):
         raise
     else:
         umount(mount_process, mnt_dir)
-
-@pytest.mark.parametrize("writeback", (False, True))
-def test_write_cache(tmpdir, writeback):
-    if writeback and LooseVersion(platform.release()) < '3.14':
-        pytest.skip('Requires kernel 3.14 or newer')
-    # This test hangs under Valgrind when running close(fd)
-    # test_write_cache.c:test_fs(). Most likely this is because of an internal
-    # deadlock in valgrind, it probably assumes that until close() returns,
-    # control does not come to the program.
-    mnt_dir = str(tmpdir)
-    cmdline = [ pjoin(basename, 'test', 'test_write_cache'),
-                mnt_dir ]
-    if writeback:
-        cmdline.append('-owriteback_cache')
-    subprocess.check_call(cmdline)
 
 @pytest.mark.skipif(os.getuid() != 0,
                     reason='needs to run as root')
@@ -280,16 +247,17 @@ def test_cuse(capfd):
     finally:
         mount_process.terminate()
 
-def checked_unlink(filename, path, isdir=False):
-    fullname = pjoin(path, filename)
-    if isdir:
-        os.rmdir(fullname)
-    else:
-        os.unlink(fullname)
+def tst_unlink(src_dir, mnt_dir):
+    name = name_generator()
+    fullname = mnt_dir + "/" + name
+    with open(pjoin(src_dir, name), 'wb') as fh:
+        fh.write(b'hello')
+    assert name in os.listdir(mnt_dir)
+    os.unlink(fullname)
     with pytest.raises(OSError) as exc_info:
         os.stat(fullname)
     assert exc_info.value.errno == errno.ENOENT
-    assert filename not in os.listdir(path)
+    assert name not in os.listdir(mnt_dir)
 
 def tst_mkdir(mnt_dir):
     dirname = name_generator()
@@ -300,7 +268,17 @@ def tst_mkdir(mnt_dir):
     assert os.listdir(fullname) ==  []
     assert fstat.st_nlink in (1,2)
     assert dirname in os.listdir(mnt_dir)
-    checked_unlink(dirname, mnt_dir, isdir=True)
+
+def tst_rmdir(src_dir, mnt_dir):
+    name = name_generator()
+    fullname = mnt_dir + "/" + name
+    os.mkdir(pjoin(src_dir, name))
+    assert name in os.listdir(mnt_dir)
+    os.rmdir(fullname)
+    with pytest.raises(OSError) as exc_info:
+        os.stat(fullname)
+    assert exc_info.value.errno == errno.ENOENT
+    assert name not in os.listdir(mnt_dir)
 
 def tst_symlink(mnt_dir):
     linkname = name_generator()
@@ -311,17 +289,23 @@ def tst_symlink(mnt_dir):
     assert os.readlink(fullname) == "/imaginary/dest"
     assert fstat.st_nlink == 1
     assert linkname in os.listdir(mnt_dir)
-    checked_unlink(linkname, mnt_dir)
 
-def tst_mknod(mnt_dir):
-    filename = pjoin(mnt_dir, name_generator())
-    shutil.copyfile(TEST_FILE, filename)
-    fstat = os.lstat(filename)
+def tst_create(mnt_dir):
+    name = name_generator()
+    fullname = pjoin(mnt_dir, name)
+    with pytest.raises(OSError) as exc_info:
+        os.stat(fullname)
+    assert exc_info.value.errno == errno.ENOENT
+    assert name not in os.listdir(mnt_dir)
+
+    fd = os.open(fullname, os.O_CREAT | os.O_RDWR)
+    os.close(fd)
+
+    assert name in os.listdir(mnt_dir)
+    fstat = os.lstat(fullname)
     assert stat.S_ISREG(fstat.st_mode)
     assert fstat.st_nlink == 1
-    assert os.path.basename(filename) in os.listdir(mnt_dir)
-    assert filecmp.cmp(TEST_FILE, filename, False)
-    checked_unlink(filename, mnt_dir)
+    assert fstat.st_size == 0
 
 def tst_chown(mnt_dir):
     filename = pjoin(mnt_dir, name_generator())
@@ -342,22 +326,38 @@ def tst_chown(mnt_dir):
     assert fstat.st_uid == uid_new
     assert fstat.st_gid == gid_new
 
-    checked_unlink(filename, mnt_dir, isdir=True)
+def tst_open_read(src_dir, mnt_dir):
+    name = name_generator()
+    with open(pjoin(src_dir, name), 'wb') as fh_out, \
+         open(TEST_FILE, 'rb') as fh_in:
+        shutil.copyfileobj(fh_in, fh_out)
 
-def tst_write(mnt_dir):
-    name = pjoin(mnt_dir, name_generator())
-    shutil.copyfile(TEST_FILE, name)
-    assert filecmp.cmp(name, TEST_FILE, False)
-    checked_unlink(name, mnt_dir)
+    assert filecmp.cmp(pjoin(mnt_dir, name), TEST_FILE, False)
 
-def tst_unlink(mnt_dir):
+def tst_open_write(src_dir, mnt_dir):
+    name = name_generator()
+    fd = os.open(pjoin(src_dir, name),
+                 os.O_CREAT | os.O_RDWR)
+    os.close(fd)
+    fullname = pjoin(mnt_dir, name)
+    with open(fullname, 'wb') as fh_out, \
+         open(TEST_FILE, 'rb') as fh_in:
+        shutil.copyfileobj(fh_in, fh_out)
+
+    assert filecmp.cmp(fullname, TEST_FILE, False)
+
+def tst_open_unlink(mnt_dir):
     name = pjoin(mnt_dir, name_generator())
     data1 = b'foo'
     data2 = b'bar'
-
-    with open(pjoin(mnt_dir, name), 'wb+', buffering=0) as fh:
+    fullname = pjoin(mnt_dir, name)
+    with open(fullname, 'wb+', buffering=0) as fh:
         fh.write(data1)
-        checked_unlink(name, mnt_dir)
+        os.unlink(fullname)
+        with pytest.raises(OSError) as exc_info:
+            os.stat(fullname)
+            assert exc_info.value.errno == errno.ENOENT
+        assert name not in os.listdir(mnt_dir)
         fh.write(data2)
         fh.seek(0)
         assert fh.read() == data1+data2
@@ -370,33 +370,56 @@ def tst_link(mnt_dir):
     name2 = pjoin(mnt_dir, name_generator())
     shutil.copyfile(TEST_FILE, name1)
     assert filecmp.cmp(name1, TEST_FILE, False)
+
+    fstat1 = os.lstat(name1)
+    assert fstat1.st_nlink == 1
+
     os.link(name1, name2)
 
     fstat1 = os.lstat(name1)
     fstat2 = os.lstat(name2)
-
     assert fstat1 == fstat2
     assert fstat1.st_nlink == 2
-
     assert os.path.basename(name2) in os.listdir(mnt_dir)
     assert filecmp.cmp(name1, name2, False)
+
+    # Since RELEASE requests are asynchronous, it is possible that
+    # libfuse still considers the file to be open at this point
+    # and (since -o hard_remove is not used) renames it instead of
+    # deleting it. In that case, the following lstat() call will
+    # still report an st_nlink value of 2 (cf. issue #157).
     os.unlink(name2)
+
+    assert os.path.basename(name2) not in os.listdir(mnt_dir)
+    with pytest.raises(FileNotFoundError):
+        os.lstat(name2)
+
+    # See above, we may have to wait until RELEASE has been
+    # received before the st_nlink value is correct.
+    maxwait = time.time() + 2
     fstat1 = os.lstat(name1)
+    while fstat1.st_nlink == 2 and time.time() < maxwait:
+        fstat1 = os.lstat(name1)
+        time.sleep(0.1)
     assert fstat1.st_nlink == 1
+
     os.unlink(name1)
 
-def tst_readdir(mnt_dir):
-    dir_ = pjoin(mnt_dir, name_generator())
-    file_ = dir_ + "/" + name_generator()
-    subdir = dir_ + "/" + name_generator()
+def tst_readdir(src_dir, mnt_dir):
+    newdir = name_generator()
+
+    src_newdir = pjoin(src_dir, newdir)
+    mnt_newdir = pjoin(mnt_dir, newdir)
+    file_ = src_newdir + "/" + name_generator()
+    subdir = src_newdir + "/" + name_generator()
     subfile = subdir + "/" + name_generator()
 
-    os.mkdir(dir_)
+    os.mkdir(src_newdir)
     shutil.copyfile(TEST_FILE, file_)
     os.mkdir(subdir)
     shutil.copyfile(TEST_FILE, subfile)
 
-    listdir_is = os.listdir(dir_)
+    listdir_is = os.listdir(mnt_newdir)
     listdir_is.sort()
     listdir_should = [ os.path.basename(file_), os.path.basename(subdir) ]
     listdir_should.sort()
@@ -405,7 +428,7 @@ def tst_readdir(mnt_dir):
     os.unlink(file_)
     os.unlink(subfile)
     os.rmdir(subdir)
-    os.rmdir(dir_)
+    os.rmdir(src_newdir)
 
 def tst_truncate_path(mnt_dir):
     assert len(TEST_DATA) > 1024
@@ -476,8 +499,6 @@ def tst_utimens(mnt_dir, ns_tol=0):
     if sys.version_info >= (3,3):
         assert abs(fstat.st_atime_ns - atime_ns) <= ns_tol
         assert abs(fstat.st_mtime_ns - mtime_ns) <= ns_tol
-
-    checked_unlink(filename, mnt_dir, isdir=True)
 
 def tst_passthrough(src_dir, mnt_dir):
     name = name_generator()

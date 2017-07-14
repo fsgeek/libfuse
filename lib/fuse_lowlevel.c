@@ -2437,12 +2437,12 @@ static const char *opname(enum fuse_opcode opcode)
 static int fuse_ll_copy_from_pipe(struct fuse_bufvec *dst,
 				  struct fuse_bufvec *src)
 {
-	int res = fuse_buf_copy(dst, src, 0);
+	ssize_t res = fuse_buf_copy(dst, src, 0);
 	if (res < 0) {
 		fprintf(stderr, "fuse: copy from pipe: %s\n", strerror(-res));
 		return res;
 	}
-	if (res < fuse_buf_size(dst)) {
+	if ((size_t)res < fuse_buf_size(dst)) {
 		fprintf(stderr, "fuse: copy from pipe: short read\n");
 		return -1;
 	}
@@ -2811,7 +2811,10 @@ restart:
 	return res;
 }
 
-#define MIN_BUFSIZE 0x21000
+#define KERNEL_BUF_PAGES 32
+
+/* room needed in buffer to accommodate header */
+#define HEADER_SIZE 0x1000
 
 struct fuse_session *fuse_session_new(struct fuse_args *args,
 				      const struct fuse_lowlevel_ops *op,
@@ -2873,8 +2876,7 @@ struct fuse_session *fuse_session_new(struct fuse_args *args,
 	if (se->debug)
 		fprintf(stderr, "FUSE library version: %s\n", PACKAGE_VERSION);
 
-	se->bufsize = getpagesize() + 0x1000;
-	se->bufsize = se->bufsize < MIN_BUFSIZE ? MIN_BUFSIZE : se->bufsize;
+	se->bufsize = KERNEL_BUF_PAGES * getpagesize() + HEADER_SIZE;
 
 	list_init_req(&se->list);
 	list_init_req(&se->interrupts);
@@ -2981,12 +2983,12 @@ retry:
 
 	ret = read(fd, buf, bufsize);
 	close(fd);
-	if (ret == -1) {
+	if (ret < 0) {
 		ret = -EIO;
 		goto out_free;
 	}
 
-	if (ret == bufsize) {
+	if ((size_t)ret == bufsize) {
 		free(buf);
 		bufsize *= 4;
 		goto retry;

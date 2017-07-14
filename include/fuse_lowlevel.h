@@ -90,10 +90,16 @@ struct fuse_entry_param {
 	 */
 	struct stat attr;
 
-	/** Validity timeout (in seconds) for the attributes */
+	/** Validity timeout (in seconds) for inode attributes. If
+	    attributes only change as a result of requests that come
+	    through the kernel, this should be set to a very large
+	    value. */
 	double attr_timeout;
 
-	/** Validity timeout (in seconds) for the name */
+	/** Validity timeout (in seconds) for the name. If directory
+	    entries are changed/deleted only as a result of requests
+	    that come through the kernel, this should be set to a very
+	    large value. */
 	double entry_timeout;
 };
 
@@ -186,9 +192,11 @@ struct fuse_lowlevel_ops {
 	void (*init) (void *userdata, struct fuse_conn_info *conn);
 
 	/**
-	 * Clean up filesystem
+	 * Clean up filesystem.
 	 *
-	 * Called on filesystem exit
+	 * Called on filesystem exit. When this method is called, the
+	 * connection to the kernel may be gone already, so that eg. calls
+	 * to fuse_lowlevel_notify_* will fail.
 	 *
 	 * There's no reply to this function
 	 *
@@ -224,7 +232,7 @@ struct fuse_lowlevel_ops {
 	 * overwriting an existing file) rename. Filesystems must handle
 	 * such requests properly and it is recommended to defer removal
 	 * of the inode until the lookup count reaches zero. Calls to
-	 * unlink, remdir or rename will be followed closely by forget
+	 * unlink, rmdir or rename will be followed closely by forget
 	 * unless the file or directory is open, in which case the
 	 * kernel issues forget only after the release or releasedir
 	 * calls.
@@ -408,6 +416,13 @@ struct fuse_lowlevel_ops {
 	 * future bmap requests will fail with EINVAL without being
 	 * send to the filesystem process.
 	 *
+	 * *flags* may be `RENAME_EXCHANGE` or `RENAME_NOREPLACE`. If
+	 * RENAME_NOREPLACE is specified, the filesystem must not
+	 * overwrite *newname* if it exists and return an error
+	 * instead. If `RENAME_EXCHANGE` is specified, the filesystem
+	 * must atomically exchange the two files, i.e. both must
+	 * exist and neither may be deleted.
+	 *
 	 * Valid replies:
 	 *   fuse_reply_err
 	 *
@@ -439,14 +454,8 @@ struct fuse_lowlevel_ops {
 	/**
 	 * Open a file
 	 *
-	 * Open flags are available in fi->flags.  Creation (O_CREAT,
-	 * O_EXCL, O_NOCTTY) and by default also truncation (O_TRUNC)
-	 * flags will be filtered out. If an application specifies
-	 * O_TRUNC, fuse first calls truncate() and then open().
-	 *
-	 * If filesystem is able to handle O_TRUNC directly, the
-	 * init() handler should set the `FUSE_CAP_ATOMIC_O_TRUNC` bit
-	 * in ``conn->want``.
+	 * Open flags are available in fi->flags. Creation (O_CREAT,
+	 * O_EXCL, O_NOCTTY) flags will be filtered out. 
 	 *
 	 * Filesystem may store an arbitrary file handle (pointer,
 	 * index, etc) in fi->fh, and use this in other all other file

@@ -300,6 +300,7 @@ static void update_fs(void) {
 static void* update_fs_loop(void *data) {
     struct fuse_session *se = (struct fuse_session*) data;
     struct fuse_bufvec bufv;
+    int ret;
 
     while(1) {
         update_fs();
@@ -312,14 +313,28 @@ static void* update_fs_loop(void *data) {
             bufv.buf[0].size = file_size;
             bufv.buf[0].mem = file_contents;
             bufv.buf[0].flags = 0;
-            assert(fuse_lowlevel_notify_store(se, FILE_INO, 0,
-                                              &bufv, 0) == 0);
+
+            /* This shouldn't fail, but apparenly it sometimes
+               does - see https://github.com/libfuse/libfuse/issues/105 */
+            ret = fuse_lowlevel_notify_store(se, FILE_INO, 0, &bufv, 0);
+            if (-ret == ENODEV) {
+                // File system was unmounted
+                break;
+            }
+            else if (ret != 0) {
+                fprintf(stderr, "ERROR: fuse_lowlevel_notify_store() failed with %s (%d)\n",
+                        strerror(-ret), -ret);
+                abort();
+            }
 
             /* To make sure that everything worked correctly, ask the
                kernel to send us back the stored data */
-            assert(fuse_lowlevel_notify_retrieve
-                   (se, FILE_INO, MAX_STR_LEN, 0,
-                    (void*) strdup(file_contents)) == 0);
+            ret = fuse_lowlevel_notify_retrieve(se, FILE_INO, MAX_STR_LEN,
+                                                0, (void*) strdup(file_contents));
+            if (-ret == ENODEV) { // File system was unmounted
+                break;
+            }
+            assert(ret == 0);
             if(retrieve_status == 0)
                 retrieve_status = 1;
         }

@@ -24,14 +24,22 @@ API, the callbacks must work with inodes and responses must be sent
 explicitly using a separate set of API functions.
 
 
+Supported Platforms
+-------------------
+
+* Linux (fully)
+* BSD (mostly/best-effort)
+* For OS-X, please use [OSXFUSE](https://osxfuse.github.io/)
+  
+
 Installation
 ------------
 
 You can download libfuse from
 https://github.com/libfuse/libfuse/releases. To build and install, we
-recommend to use [Meson](http://mesonbuild.com/) and
-[Ninja](https://ninja-build.org).  After extracting the libfuse
-tarball, create a (temporary) build directory and run Meson:
+recommend to use [Meson](http://mesonbuild.com/) (version 0.38 or
+newer) and [Ninja](https://ninja-build.org).  After extracting the
+libfuse tarball, create a (temporary) build directory and run Meson:
 
     $ mkdir build; cd build
     $ meson ..
@@ -46,17 +54,17 @@ command:
 To build, test and install libfuse, you then use Ninja:
 
     $ ninja
-    $ sudo ninja tests # requires pytest, see below
+    $ sudo python3 -m pytest test/
     $ sudo ninja install
 
 Running the tests requires the [py.test](http://www.pytest.org/)
 Python module. Instead of running the tests as root, the majority of
-tests can also be run as a regular user if *util/fusermount3* is
-made setuid root first:
+tests can also be run as a regular user if *util/fusermount3* is made
+setuid root first:
 
     $ sudo chown root:root util/fusermount3
     $ sudo chmod 4755 util/fusermount3
-    $ ninja tests
+    $ python3 -m pytest test/
 
 
 Alternate Installation

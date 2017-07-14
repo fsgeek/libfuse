@@ -1,8 +1,39 @@
-libfuse 3.1.0 (UNRELEASED)
+Unreleased Changes
+==================
+
+* The init script is now installed into the right location
+  ($DESTDIR/etc/init.d rather than $prefix/$sysconfdir/init.d) 
+* The `example/passthrough_ll` filesystem now supports creating
+  and writing to files.
+* `fuse_main()` / `fuse_remove_signal_handlers()`: do not reset
+  `SIGPIPE` handler to `SIG_DFL` it was not set by us.
+* Documented the `RENAME_EXCHANGE` and `RENAME_NOREPLACE` flags that
+  may be passed to the `rename` handler of both the high- and
+  low-level API. Filesystem authors are strongly encouraged to check
+  that these flags are handled correctly.
+
+libfuse 3.0.2 (2017-05-24)
 ==========================
 
-* Re-introduced examples/null.c.
+* Option parsing for the high-level API now works correctly
+  (previously, default values would override specified values).
+* Tests should now build (and run) under FreeBSD.
+* Improved documentation of `struct fuse_context`
+* Internal: calculate request buffer size from page size and kernel
+  page limit instead of using hardcoded 128 kB limit.
+
+
+libfuse 3.0.1 (2017-04-10)
+==========================
+
+* Re-introduced *examples/null.c*.
 * Added experimental support for building with Meson.
+* Document that `-o auto_unmount` implies `-o nodev,nosuid`.
+* Document that the *use_ino* option of the high-level interface does
+  not affect the inode that libfuse and the kernel use internally.
+* Fixed test cases for passthrough* examples (they weren't actually
+  testing the examples).
+* Fixed several bugs in the passthrough* examples.
 
 libfuse 3.0.0 (2016-12-08)
 ==========================

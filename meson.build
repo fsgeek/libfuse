@@ -1,7 +1,8 @@
 # Attention, emacs, please use -*- mode: python -*-
 # (even though this isn't actually Python code)
 
-project('libfuse3', 'c', version: '3.1.0',
+project('libfuse3', 'c', version: '3.0.2',
+        meson_version: '>= 0.38',
         default_options: [ 'buildtype=plain' ])
 
 #
@@ -74,11 +75,8 @@ if not cc.compiles(code, args: [ '-O0', '-Werror=unused-result' ])
      message('Compiler warns about unused result even when casting to void')
      add_global_arguments('-Wno-unused-result', language: 'c')
 endif
-
-# current_build_dir() contains config.h
+# '.' will refer to current build directory, which contains config.h
 include_dirs = include_directories('include', 'lib', '.')
-# for some reason this throws an error if I use it instead of .
-#                                   meson.current_build_dir())
 
 # Common dependencies
 thread_dep = dependency('threads') 
