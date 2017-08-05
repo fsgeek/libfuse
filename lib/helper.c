@@ -42,9 +42,11 @@ static const struct fuse_opt fuse_helper_opts[] = {
 	FUSE_HELPER_OPT("-f",		foreground),
 	FUSE_HELPER_OPT("-s",		singlethread),
 	FUSE_HELPER_OPT("fsname=",	nodefault_subtype),
-	FUSE_HELPER_OPT("subtype=",	nodefault_subtype),
 	FUSE_OPT_KEY("fsname=",		FUSE_OPT_KEY_KEEP),
+#ifndef __FreeBSD__
+	FUSE_HELPER_OPT("subtype=",	nodefault_subtype),
 	FUSE_OPT_KEY("subtype=",	FUSE_OPT_KEY_KEEP),
+#endif
 	FUSE_HELPER_OPT("clone_fd",	clone_fd),
 	FUSE_OPT_END
 };
@@ -161,10 +163,13 @@ static int fuse_helper_opt_proc(void *data, const char *arg, int key,
 	}
 }
 
+/* Under FreeBSD, there is no subtype option so this
+   function actually sets the fsname */
 static int add_default_subtype(const char *progname, struct fuse_args *args)
 {
 	int res;
 	char *subtype_opt;
+
 	const char *basename = strrchr(progname, '/');
 	if (basename == NULL)
 		basename = progname;
@@ -176,7 +181,11 @@ static int add_default_subtype(const char *progname, struct fuse_args *args)
 		fprintf(stderr, "fuse: memory allocation failed\n");
 		return -1;
 	}
+#ifdef __FreeBSD__
+	sprintf(subtype_opt, "-ofsname=%s", basename);
+#else
 	sprintf(subtype_opt, "-osubtype=%s", basename);
+#endif
 	res = fuse_opt_add_arg(args, subtype_opt);
 	free(subtype_opt);
 	return res;
@@ -190,8 +199,10 @@ int fuse_parse_cmdline(struct fuse_args *args,
 			   fuse_helper_opt_proc) == -1)
 		return -1;
 
-	/* If neither -o subtype nor -o fsname are specified,
-	   set subtype to program's basename */
+	/* *Linux*: if neither -o subtype nor -o fsname are specified,
+	   set subtype to program's basename.
+	   *FreeBSD*: if fsname is not specified, set to program's
+	   basename. */
 	if (!opts->nodefault_subtype)
 		if (add_default_subtype(args->argv[0], args) == -1)
 			return -1;
@@ -272,18 +283,15 @@ int fuse_main_real(int argc, char *argv[], const struct fuse_operations *op,
 		goto out1;
 	}
 
-	/* Re-add --help for later processing by fuse_new()
-	   (that way we also get help for modules options) */
 	if (opts.show_help) {
 		if(args.argv[0] != '\0')
 			printf("usage: %s [options] <mountpoint>\n\n",
 			       args.argv[0]);
 		printf("FUSE options:\n");
 		fuse_cmdline_help();
-		if (fuse_opt_add_arg(&args, "--help") == -1) {
-			res = 1;
-			goto out1;
-		}
+		fuse_lib_help(&args);
+		res = 0;
+		goto out1;
 	}
 
 	if (!opts.show_help &&
@@ -294,10 +302,9 @@ int fuse_main_real(int argc, char *argv[], const struct fuse_operations *op,
 	}
 
 
-	/* --help is processed here and will result in NULL */
 	fuse = fuse_new(&args, op, op_size, user_data);
 	if (fuse == NULL) {
-		res = opts.show_help ? 0 : 1;
+		res = 1;
 		goto out1;
 	}
 

@@ -1,9 +1,16 @@
-# Attention, emacs, please use -*- mode: python -*-
-# (even though this isn't actually Python code)
-
-project('libfuse3', 'c', version: '3.0.2',
+project('libfuse3', 'c', version: '3.1.0',
         meson_version: '>= 0.38',
         default_options: [ 'buildtype=plain' ])
+
+
+platform = host_machine.system()
+if platform == 'darwin'
+  error('libfuse does not support OS-X.\n' +
+        'Take a look at http://osxfuse.github.io/ instead')
+elif platform == 'cygwin' or platform == 'windows'
+  error('libfuse does not support Windows.\n' +
+        'Take a look at http://www.secfs.net/winfsp/ instead')       
+endif
 
 #
 # Feature detection
@@ -84,7 +91,10 @@ thread_dep = dependency('threads')
 #
 # Read build files from sub-directories
 #
-subdirs = [ 'lib', 'include', 'util', 'example', 'doc', 'test' ]
+subdirs = [ 'lib', 'include', 'example', 'doc', 'test' ]
+if platform != 'bsd'
+  subdirs += 'util'
+endif
 foreach n : subdirs
     subdir(n)
 endforeach

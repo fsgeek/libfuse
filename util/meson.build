@@ -1,6 +1,3 @@
-# Attention, emacs, please use -*- mode: python -*-
-# (even though this isn't actually Python code)
-
 # we re-use mount_util.c from the library, but do want to keep ourself
 # as stand-alone as possible. in order to make an out-of-source build
 # possible, we "generate" the file from its original location by
@@ -21,7 +18,10 @@ executable('mount.fuse3', ['mount.fuse.c'],
            install: true,
            install_dir: get_option('sbindir'))
 
+udev = dependency('udev')
+udevrulesdir = join_paths(udev.get_pkgconfig_variable('udevdir'), 'rules.d')
+
 meson.add_install_script('install_helper.sh', get_option('sysconfdir'),
-                         get_option('bindir'), get_option('libdir'))
+                         get_option('bindir'), udevrulesdir)
 
 
