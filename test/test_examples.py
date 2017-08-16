@@ -14,7 +14,9 @@ import shutil
 import filecmp
 import time
 import errno
+import sys
 from tempfile import NamedTemporaryFile
+from contextlib import contextmanager
 from util import (wait_for_mount, umount, cleanup, base_cmdline,
                   safe_sleep, basename, fuse_test_marker)
 from os.path import join as pjoin
@@ -30,8 +32,11 @@ def name_generator(__ctr=[0]):
     __ctr[0] += 1
     return 'testfile_%d' % __ctr[0]
 
+options = [ [] ]
+if sys.platform == 'linux':
+    options.append(['-o', 'clone_fd'])
+@pytest.mark.parametrize("options", options)
 @pytest.mark.parametrize("name", ('hello', 'hello_ll'))
-@pytest.mark.parametrize("options", ([], ['-o', 'clone_fd']))
 def test_hello(tmpdir, name, options):
     mnt_dir = str(tmpdir)
     cmdline = base_cmdline + \
@@ -59,8 +64,50 @@ def test_hello(tmpdir, name, options):
     else:
         umount(mount_process, mnt_dir)
 
-@pytest.mark.parametrize("name", ('passthrough', 'passthrough_fh',
-                                  'passthrough_ll'))
+@pytest.mark.skipif('bsd' in sys.platform,
+                    reason='not supported under BSD')
+@pytest.mark.parametrize("writeback", (False, True))
+@pytest.mark.parametrize("debug", (False, True))
+def test_passthrough_ll(tmpdir, writeback, debug, capfd):
+    
+    # Avoid false positives from libfuse debug messages
+    if debug:
+        capfd.register_output(r'^   unique: [0-9]+, error: -[0-9]+ .+$',
+                              count=0)
+
+    mnt_dir = str(tmpdir.mkdir('mnt'))
+    src_dir = str(tmpdir.mkdir('src'))
+
+    cmdline = base_cmdline + \
+              [ pjoin(basename, 'example', 'passthrough_ll'),
+                '-f', mnt_dir ]
+    if debug:
+        cmdline.append('-d')
+
+    if writeback:
+        cmdline.append('-o')
+        cmdline.append('writeback')
+        
+    mount_process = subprocess.Popen(cmdline)
+    try:
+        wait_for_mount(mount_process, mnt_dir)
+        work_dir = mnt_dir + src_dir
+
+        tst_statvfs(work_dir)
+        tst_readdir(src_dir, work_dir)
+        tst_open_read(src_dir, work_dir)
+        tst_open_write(src_dir, work_dir)
+        tst_create(work_dir)
+        tst_passthrough(src_dir, work_dir)
+        tst_append(src_dir, work_dir)
+        tst_seek(src_dir, work_dir)
+    except:
+        cleanup(mnt_dir)
+        raise
+    else:
+        umount(mount_process, mnt_dir)
+
+@pytest.mark.parametrize("name", ('passthrough', 'passthrough_fh'))
 @pytest.mark.parametrize("debug", (False, True))
 def test_passthrough(tmpdir, name, debug, capfd):
     
@@ -69,7 +116,10 @@ def test_passthrough(tmpdir, name, debug, capfd):
         capfd.register_output(r'^   unique: [0-9]+, error: -[0-9]+ .+$',
                               count=0)
 
-    is_ll = (name == 'passthrough_ll')
+    # test_syscalls prints "No error" under FreeBSD
+    capfd.register_output(r"^ \d\d \[[^\]]+ message: 'No error: 0'\]",
+                          count=0)
+
     mnt_dir = str(tmpdir.mkdir('mnt'))
     src_dir = str(tmpdir.mkdir('src'))
 
@@ -89,24 +139,25 @@ def test_passthrough(tmpdir, name, debug, capfd):
         tst_open_write(src_dir, work_dir)
         tst_create(work_dir)
         tst_passthrough(src_dir, work_dir)
-        if not is_ll:
-            tst_mkdir(work_dir)
-            tst_rmdir(src_dir, work_dir)
-            tst_unlink(src_dir, work_dir)
-            tst_symlink(work_dir)
-            if os.getuid() == 0:
-                tst_chown(work_dir)
+        tst_append(src_dir, work_dir)
+        tst_seek(src_dir, work_dir)
+        tst_mkdir(work_dir)
+        tst_rmdir(src_dir, work_dir)
+        tst_unlink(src_dir, work_dir)
+        tst_symlink(work_dir)
+        if os.getuid() == 0:
+            tst_chown(work_dir)
 
-            # Underlying fs may not have full nanosecond resolution
-            tst_utimens(work_dir, ns_tol=1000)
+        # Underlying fs may not have full nanosecond resolution
+        tst_utimens(work_dir, ns_tol=1000)
 
-            tst_link(work_dir)
-            tst_truncate_path(work_dir)
-            tst_truncate_fd(work_dir)
-            tst_open_unlink(work_dir)
-
-            subprocess.check_call([ os.path.join(basename, 'test', 'test_syscalls'),
-                                    work_dir, ':' + src_dir ])
+        tst_link(work_dir)
+        tst_truncate_path(work_dir)
+        tst_truncate_fd(work_dir)
+        tst_open_unlink(work_dir)
+        
+        subprocess.check_call([ os.path.join(basename, 'test', 'test_syscalls'),
+                                work_dir, ':' + src_dir ])
     except:
         cleanup(mnt_dir)
         raise
@@ -247,6 +298,17 @@ def test_cuse(capfd):
     finally:
         mount_process.terminate()
 
+@contextmanager
+def os_open(name, flags):
+    fd = os.open(name, flags)
+    try:
+        yield fd
+    finally:
+        os.close(fd)
+
+def os_create(name):
+    os.close(os.open(name, os.O_CREAT | os.O_RDWR))
+
 def tst_unlink(src_dir, mnt_dir):
     name = name_generator()
     fullname = mnt_dir + "/" + name
@@ -337,9 +399,7 @@ def tst_open_read(src_dir, mnt_dir):
 
 def tst_open_write(src_dir, mnt_dir):
     name = name_generator()
-    fd = os.open(pjoin(src_dir, name),
-                 os.O_CREAT | os.O_RDWR)
-    os.close(fd)
+    os_create(pjoin(src_dir, name))
     fullname = pjoin(mnt_dir, name)
     with open(fullname, 'wb') as fh_out, \
          open(TEST_FILE, 'rb') as fh_in:
@@ -347,6 +407,32 @@ def tst_open_write(src_dir, mnt_dir):
 
     assert filecmp.cmp(fullname, TEST_FILE, False)
 
+def tst_append(src_dir, mnt_dir):
+    name = name_generator()
+    os_create(pjoin(src_dir, name))
+    fullname = pjoin(mnt_dir, name)
+    with os_open(fullname, os.O_WRONLY) as fd:
+        os.write(fd, b'foo\n')
+    with os_open(fullname, os.O_WRONLY|os.O_APPEND) as fd:
+        os.write(fd, b'bar\n')
+
+    with open(fullname, 'rb') as fh:
+        assert fh.read() == b'foo\nbar\n'
+
+def tst_seek(src_dir, mnt_dir):
+    name = name_generator()
+    os_create(pjoin(src_dir, name))
+    fullname = pjoin(mnt_dir, name)
+    with os_open(fullname, os.O_WRONLY) as fd:
+        os.lseek(fd, 1, os.SEEK_SET)
+        os.write(fd, b'foobar\n')
+    with os_open(fullname, os.O_WRONLY) as fd:
+        os.lseek(fd, 4, os.SEEK_SET)
+        os.write(fd, b'com')
+        
+    with open(fullname, 'rb') as fh:
+        assert fh.read() == b'\0foocom\n'
+        
 def tst_open_unlink(mnt_dir):
     name = pjoin(mnt_dir, name_generator())
     data1 = b'foo'

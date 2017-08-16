@@ -19,6 +19,13 @@
  * until the file is not opened anymore would make the example much
  * more complicated.
  *
+ * When writeback caching is enabled (-o writeback mount option), it
+ * is only possible to write to files for which the mounting user has
+ * read permissions. This is because the writeback cache requires the
+ * kernel to be able to issue read requests for all files (which the
+ * passthrough filesystem cannot satisfy if it can't read the file in
+ * the underlying filesystem).
+ *
  * Compile with:
  *
  *     gcc -Wall passthrough_ll.c `pkg-config fuse3 --cflags --libs` -o passthrough_ll
@@ -46,6 +53,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <err.h>
+#include <inttypes.h>
 
 /* We are re-using pointers to our `struct lo_inode` and `struct
    lo_dirp` elements as inodes. This means that we must be able to
@@ -60,48 +68,6 @@ struct _uintptr_to_must_hold_fuse_ino_t_dummy_struct \
 			((sizeof(fuse_ino_t) >= sizeof(uintptr_t)) ? 1 : -1); };
 #endif
 
-/* Compat stuff.  Doesn't make it work, just makes it compile. */
-#ifndef HAVE_FSTATAT
-#warning fstatat(2) needed by this program
-int fstatat(int dirfd, const char *pathname, struct stat *buf, int flags)
-{
-	errno = ENOSYS;
-	return -1;
-}
-#endif
-#ifndef HAVE_OPENAT
-#warning openat(2) needed by this program
-int openat(int dirfd, const char *pathname, int flags, ...)
-{
-	errno = ENOSYS;
-	return -1;
-}
-#endif
-#ifndef HAVE_READLINKAT
-#warning readlinkat(2) needed by this program
-ssize_t readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz)
-{
-	errno = ENOSYS;
-	return -1;
-}
-#endif
-#ifndef AT_EMPTY_PATH
-#warning AT_EMPTY_PATH needed by this program
-#define AT_EMPTY_PATH 0
-#endif
-#ifndef AT_SYMLINK_NOFOLLOW
-#warning AT_SYMLINK_NOFOLLOW needed by this program
-#define AT_SYMLINK_NOFOLLOW 0
-#endif
-#ifndef O_PATH
-#warning O_PATH needed by this program
-#define O_PATH 0
-#endif
-#ifndef O_NOFOLLOW
-#warning O_NOFOLLOW needed by this program
-#define O_NOFOLLOW 0
-#endif
-
 struct lo_inode {
 	struct lo_inode *next;
 	struct lo_inode *prev;
@@ -113,7 +79,16 @@ struct lo_inode {
 
 struct lo_data {
 	int debug;
+	int writeback;
 	struct lo_inode root;
+};
+
+static const struct fuse_opt lo_opts[] = {
+	{ "writeback",
+	  offsetof(struct lo_data, writeback), 1 },
+	{ "no_writeback",
+	  offsetof(struct lo_data, writeback), 0 },
+	FUSE_OPT_END
 };
 
 static struct lo_data *lo_data(fuse_req_t req)
@@ -142,8 +117,15 @@ static bool lo_debug(fuse_req_t req)
 static void lo_init(void *userdata,
 		    struct fuse_conn_info *conn)
 {
-	(void) userdata;
+	struct lo_data *lo = (struct lo_data*) userdata;
 	conn->want |= FUSE_CAP_EXPORT_SUPPORT;
+
+	if (lo->writeback &&
+	    conn->capable & FUSE_CAP_WRITEBACK_CACHE) {
+		if (lo->debug)
+			fprintf(stderr, "lo_init: activating writeback\n");
+		conn->want |= FUSE_CAP_WRITEBACK_CACHE;
+	}
 }
 
 static void lo_getattr(fuse_req_t req, fuse_ino_t ino,
@@ -233,6 +215,10 @@ static void lo_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 	struct fuse_entry_param e;
 	int err;
 
+	if (lo_debug(req))
+		fprintf(stderr, "lo_lookup(parent=%" PRIu64 ", name=%s)\n",
+			parent, name);
+	
 	err = lo_do_lookup(req, parent, name, &e);
 	if (err)
 		fuse_reply_err(req, err);
@@ -436,6 +422,10 @@ static void lo_create(fuse_req_t req, fuse_ino_t parent, const char *name,
 	struct fuse_entry_param e;
 	int err;
 
+	if (lo_debug(req))
+		fprintf(stderr, "lo_create(parent=%" PRIu64 ", name=%s)\n",
+			parent, name);
+			
 	fd = openat(lo_fd(req, parent), name,
 		    (fi->flags | O_CREAT) & ~O_NOFOLLOW, mode);
 	if (fd == -1)
@@ -455,6 +445,27 @@ static void lo_open(fuse_req_t req, fuse_ino_t ino,
 {
 	int fd;
 	char buf[64];
+
+	if (lo_debug(req))
+		fprintf(stderr, "lo_open(ino=%" PRIu64 ", flags=%d)\n",
+			ino, fi->flags);
+
+	/* With writeback cache, kernel may send read requests even
+	   when userspace opened write-only */
+	if (lo_data(req)->writeback &&
+	    (fi->flags & O_ACCMODE) == O_WRONLY) {
+		fi->flags &= ~O_ACCMODE;
+		fi->flags |= O_RDWR;
+	}
+
+	/* With writeback cache, O_APPEND is handled by the kernel.
+	   This breaks atomicity (since the file may change in the
+	   underlying filesystem, so that the kernel's idea of the
+	   end of the file isn't accurate anymore). In this example,
+	   we just accept that. A more rigorous filesystem may want
+	   to return an error here */
+	if (lo_data(req)->writeback && (fi->flags & O_APPEND))
+		fi->flags &= ~O_APPEND;
 
 	sprintf(buf, "/proc/self/fd/%i", lo_fd(req, ino));
 	fd = open(buf, fi->flags & ~O_NOFOLLOW);
@@ -478,7 +489,9 @@ static void lo_read(fuse_req_t req, fuse_ino_t ino, size_t size,
 {
 	struct fuse_bufvec buf = FUSE_BUFVEC_INIT(size);
 
-	(void) ino;
+	if (lo_debug(req))
+		fprintf(stderr, "lo_read(ino=%" PRIu64 ", size=%zd, "
+			"off=%lu)\n", ino, size, (unsigned long) offset);
 
 	buf.buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
 	buf.buf[0].fd = fi->fh;
@@ -499,6 +512,10 @@ static void lo_write_buf(fuse_req_t req, fuse_ino_t ino,
 	out_buf.buf[0].fd = fi->fh;
 	out_buf.buf[0].pos = off;
 
+	if (lo_debug(req))
+		fprintf(stderr, "lo_write(ino=%" PRIu64 ", size=%zd, off=%lu)\n",
+			ino, out_buf.buf[0].size, (unsigned long) off);
+	
 	res = fuse_buf_copy(&out_buf, in_buf, 0);
 	if(res < 0)
 		fuse_reply_err(req, -res);
@@ -528,7 +545,8 @@ int main(int argc, char *argv[])
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 	struct fuse_session *se;
 	struct fuse_cmdline_opts opts;
-	struct lo_data lo = { .debug = 0 };
+	struct lo_data lo = { .debug = 0,
+	                      .writeback = 0 };
 	int ret = -1;
 
 	lo.root.next = lo.root.prev = &lo.root;
@@ -549,6 +567,9 @@ int main(int argc, char *argv[])
 		goto err_out1;
 	}
 
+	if (fuse_opt_parse(&args, &lo, lo_opts, NULL)== -1)
+		return 1;
+	
 	lo.debug = opts.debug;
 	lo.root.fd = open("/", O_PATH);
 	lo.root.nlookup = 2;

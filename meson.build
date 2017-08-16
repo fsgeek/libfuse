@@ -1,4 +1,4 @@
-project('libfuse3', 'c', version: '3.1.0',
+project('libfuse3', 'c', version: '3.1.1',
         meson_version: '>= 0.38',
         default_options: [ 'buildtype=plain' ])
 
@@ -92,7 +92,7 @@ thread_dep = dependency('threads')
 # Read build files from sub-directories
 #
 subdirs = [ 'lib', 'include', 'example', 'doc', 'test' ]
-if platform != 'bsd'
+if not platform.endswith('bsd')
   subdirs += 'util'
 endif
 foreach n : subdirs

@@ -1,6 +1,22 @@
 Unreleased Changes
 ==================
 
+* Fixed support for `FUSE_CAP_POSIX_ACL`: setting this capability
+  flag had no effect in the previous versions of libfuse 3.x;
+  now ACLs should actually work.
+
+* Fixed a number of compilation problems under FreeBSD.
+
+* Fixed installation directory for udev rules.  
+
+* Fixed compilation with LTO.
+
+libfuse 3.1.1 (2017-08-06)
+==========================
+
+* Documentation: clarified how filesystems are supposed to process
+  open() and create() flags (see include/fuse_lowlevel.h).
+
 * Fixed a compilation problem of the passthrough_ll example on
   32 bit systems (wrong check and wrong error message).
 
@@ -10,10 +26,12 @@ Unreleased Changes
 * Fixed a symbol versioning problem that resulted in very strange
   failures (segfaults, unexpected behavior) in different situations.
 
-* Fixed a test failure when /tmp is on btrfs.  
+* Fixed a test failure when /tmp is on btrfs.
 
 * Incorporated several patches from the FreeBSD port. libfuse should
   now compile under FreeBSD without the need for patches.
+
+* The passthrough_ll example now supports writeback caching.
 
 libfuse 3.1.0 (2017-07-08)
 ==========================
