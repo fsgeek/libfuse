@@ -63,9 +63,11 @@ configure_file(output: 'config.h',
 #
 # Compiler configuration
 #
+# changed to ease debugging from -O2 -g
+#
 add_global_arguments('-D_REENTRANT', '-DHAVE_CONFIG_H', '-Wall', '-Wextra', '-Wno-sign-compare',
                      '-Wstrict-prototypes', '-Wmissing-declarations', '-Wwrite-strings',
-                     '-O2', '-g', '-fno-strict-aliasing', language: 'c')
+                     '-O0', '-g3', '-fno-strict-aliasing', language: 'c')
 
 # Some (stupid) GCC versions warn about unused return values even when they are
 # casted to void. This makes -Wunused-result pretty useless, since there is no

@@ -108,9 +108,11 @@ static void list_del_worker(struct fuse_worker *w)
 	next->prev = prev;
 }
 
+typedef int (*fuse_generic_receive_buf_int)(struct fuse_session *se, struct fuse_buf *buf, struct fuse_chan *ch);
+
 static int fuse_loop_start_thread(struct fuse_mt *mt);
 
-static void *fuse_do_work(void *data)
+static void *fuse_generic_do_work(void *data, fuse_generic_receive_buf_int generic_receive_buf_int)
 {
 	struct fuse_worker *w = (struct fuse_worker *) data;
 	struct fuse_mt *mt = w->mt;
@@ -120,7 +122,7 @@ static void *fuse_do_work(void *data)
 		int res;
 
 		pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
-		res = fuse_session_receive_buf_int(mt->se, &w->fbuf, w->ch);
+		res = generic_receive_buf_int(mt->se, &w->fbuf, w->ch);
 		pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
 		if (res == -EINTR)
 			continue;
@@ -184,6 +186,12 @@ static void *fuse_do_work(void *data)
 
 	return NULL;
 }
+
+static void *fuse_do_work(void *data)
+{
+	return fuse_generic_do_work(data, fuse_session_receive_buf_int);	
+}
+
 
 int fuse_start_thread(pthread_t *thread_id, void *(*func)(void *), void *arg)
 {
