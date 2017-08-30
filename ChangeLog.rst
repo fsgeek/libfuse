@@ -1,6 +1,33 @@
 Unreleased Changes
 ==================
 
+* Support for building with autotools has been dropped.
+  
+* Added new `fuse_invalidate_path()` routine for cache invalidation
+  from the high-level FUSE API, along with an example and tests.
+  
+* There's a new `printcap` example that can be used to determine the
+  capabilities of the running kernel.
+  
+* `fuse_loop_mt()` now returns the minus the actual errno if there was
+  an error (instead of just -1).
+  
+* `fuse_loop()` no longer returns a positive value if the filesystem
+  loop was terminated without errors or signals.
+  
+* Improved documentation of `fuse_lowlevel_notify_*` functions.
+
+* `fuse_lowlevel_notify_inval_inode()` and
+  `fuse_lowlevel_notify_inval_entry()` now return -ENOSYS instead of
+  an undefined error if the function is not supported by the kernel.
+  
+* Documented the special meaning of the *zero* offset for the
+  fuse_fill_dir_t function.
+  
+* The `passthrough_fh` example now works under FreeBSD.
+  
+* libfuse can now be build without libiconv.
+
 * Fixed support for `FUSE_CAP_POSIX_ACL`: setting this capability
   flag had no effect in the previous versions of libfuse 3.x;
   now ACLs should actually work.
@@ -27,6 +54,13 @@ libfuse 3.1.1 (2017-08-06)
   failures (segfaults, unexpected behavior) in different situations.
 
 * Fixed a test failure when /tmp is on btrfs.
+
+* The maximum number of idle worker threads used by `fuse_loop_mt()`
+  is now configurable.
+
+* `fuse_loop_mt()` and `fuse_session_loop_mt()` now take a
+  `struct fuse_loop_config` parameter that supersedes the *clone_fd*
+  parameter.
 
 * Incorporated several patches from the FreeBSD port. libfuse should
   now compile under FreeBSD without the need for patches.

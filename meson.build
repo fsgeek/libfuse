@@ -1,6 +1,6 @@
-project('libfuse3', 'c', version: '3.1.1',
+project('libfuse3', 'c', version: '3.2.0',
         meson_version: '>= 0.38',
-        default_options: [ 'buildtype=plain' ])
+        default_options: [ 'buildtype=debugoptimized' ])
 
 
 platform = host_machine.system()

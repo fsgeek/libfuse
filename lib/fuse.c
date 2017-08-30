@@ -198,7 +198,9 @@ struct fuse_context_i {
 
 /* Defined by FUSE_REGISTER_MODULE() in lib/modules/subdir.c and iconv.c.  */
 extern fuse_module_factory_t fuse_module_subdir_factory;
+#ifdef HAVE_ICONV
 extern fuse_module_factory_t fuse_module_iconv_factory;
+#endif
 
 static pthread_key_t fuse_context_key;
 static pthread_mutex_t fuse_context_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -889,6 +891,36 @@ static struct node *find_node(struct fuse *f, fuse_ino_t parent,
 out_err:
 	pthread_mutex_unlock(&f->lock);
 	return node;
+}
+
+static int lookup_path_in_cache(struct fuse *f,
+		const char *path, fuse_ino_t *inop)
+{
+	char *tmp = strdup(path);
+	if (!tmp)
+		return -ENOMEM;
+
+	pthread_mutex_lock(&f->lock);
+	fuse_ino_t ino = FUSE_ROOT_ID;
+
+	int err = 0;
+	char *save_ptr;
+	char *path_element = strtok_r(tmp, "/", &save_ptr);
+	while (path_element != NULL) {
+		struct node *node = lookup_node(f, ino, path_element);
+		if (node == NULL) {
+			err = -ENOENT;
+			break;
+		}
+		ino = node->nodeid;
+		path_element = strtok_r(NULL, "/", &save_ptr);
+	}
+	pthread_mutex_unlock(&f->lock);
+	free(tmp);
+
+	if (!err)
+		*inop = ino;
+	return err;
 }
 
 static char *add_name(char **buf, unsigned *bufsize, char *s, const char *name)
@@ -4350,7 +4382,9 @@ int fuse_loop(struct fuse *f)
 	return fuse_session_loop(f->se);
 }
 
-int fuse_loop_mt(struct fuse *f, int clone_fd)
+int fuse_loop_mt_32(struct fuse *f, struct fuse_loop_config *config);
+FUSE_SYMVER(".symver fuse_loop_mt_32,fuse_loop_mt@@FUSE_3.2");
+int fuse_loop_mt_32(struct fuse *f, struct fuse_loop_config *config)
 {
 	if (f == NULL)
 		return -1;
@@ -4359,9 +4393,19 @@ int fuse_loop_mt(struct fuse *f, int clone_fd)
 	if (res)
 		return -1;
 
-	res = fuse_session_loop_mt(fuse_get_session(f), clone_fd);
+	res = fuse_session_loop_mt(fuse_get_session(f), config);
 	fuse_stop_cleanup_thread(f);
 	return res;
+}
+
+int fuse_loop_mt_31(struct fuse *f, int clone_fd);
+FUSE_SYMVER(".symver fuse_loop_mt_31,fuse_loop_mt@FUSE_3.1");
+int fuse_loop_mt_31(struct fuse *f, int clone_fd)
+{
+	struct fuse_loop_config config;
+	config.clone_fd = clone_fd;
+	config.max_idle_threads = 10;
+	return fuse_loop_mt_32(f, &config);
 }
 
 void fuse_exit(struct fuse *f)
@@ -4396,6 +4440,16 @@ int fuse_interrupted(void)
 		return fuse_req_interrupted(c->req);
 	else
 		return 0;
+}
+
+int fuse_invalidate_path(struct fuse *f, const char *path) {
+	fuse_ino_t ino;
+	int err = lookup_path_in_cache(f, path, &ino);
+	if (err) {
+		return err;
+	}
+
+	return fuse_lowlevel_notify_inval_inode(f->se, ino, 0, 0);
 }
 
 #define FUSE_LIB_OPT(t, p, v) { t, offsetof(struct fuse_config, p), v }
@@ -4476,7 +4530,9 @@ void fuse_lib_help(struct fuse_args *args)
 
 	/* Print help for builtin modules */
 	print_module_help("subdir", &fuse_module_subdir_factory);
+#ifdef HAVE_ICONV
 	print_module_help("iconv", &fuse_module_iconv_factory);
+#endif
 
 	/* Parse command line options in case we need to
 	   activate more modules */
@@ -4661,7 +4717,9 @@ struct fuse *fuse_new_31(struct fuse_args *args,
 	if (builtin_modules_registered == 0) {
 		/* If not, register them. */
 		fuse_register_module("subdir", fuse_module_subdir_factory, NULL);
+#ifdef HAVE_ICONV
 		fuse_register_module("iconv", fuse_module_iconv_factory, NULL);
+#endif
 		builtin_modules_registered= 1;
 	}
 	pthread_mutex_unlock(&fuse_context_lock);

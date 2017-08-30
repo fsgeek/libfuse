@@ -18,12 +18,13 @@ import sys
 from tempfile import NamedTemporaryFile
 from contextlib import contextmanager
 from util import (wait_for_mount, umount, cleanup, base_cmdline,
-                  safe_sleep, basename, fuse_test_marker)
+                  safe_sleep, basename, fuse_test_marker, test_printcap,
+                  fuse_proto)
 from os.path import join as pjoin
 
-TEST_FILE = __file__
-
 pytestmark = fuse_test_marker()
+
+TEST_FILE = __file__
 
 with open(TEST_FILE, 'rb') as fh:
     TEST_DATA = fh.read()
@@ -64,11 +65,14 @@ def test_hello(tmpdir, name, options):
     else:
         umount(mount_process, mnt_dir)
 
-@pytest.mark.skipif('bsd' in sys.platform,
-                    reason='not supported under BSD')
+
 @pytest.mark.parametrize("writeback", (False, True))
 @pytest.mark.parametrize("debug", (False, True))
 def test_passthrough_ll(tmpdir, writeback, debug, capfd):
+    
+    progname = pjoin(basename, 'example', 'passthrough_ll')
+    if not os.path.exists(progname):
+        pytest.skip('%s not built' % os.path.basename(progname))
     
     # Avoid false positives from libfuse debug messages
     if debug:
@@ -78,9 +82,7 @@ def test_passthrough_ll(tmpdir, writeback, debug, capfd):
     mnt_dir = str(tmpdir.mkdir('mnt'))
     src_dir = str(tmpdir.mkdir('src'))
 
-    cmdline = base_cmdline + \
-              [ pjoin(basename, 'example', 'passthrough_ll'),
-                '-f', mnt_dir ]
+    cmdline = base_cmdline + [ progname, '-f', mnt_dir ]
     if debug:
         cmdline.append('-d')
 
@@ -164,11 +166,16 @@ def test_passthrough(tmpdir, name, debug, capfd):
     else:
         umount(mount_process, mnt_dir)
 
+@pytest.mark.skipif(fuse_proto < (7,11),
+                    reason='not supported by running kernel')
 def test_ioctl(tmpdir):
+    progname = pjoin(basename, 'example', 'ioctl')
+    if not os.path.exists(progname):
+        pytest.skip('%s not built' % os.path.basename(progname))
+    
     mnt_dir = str(tmpdir)
     testfile = pjoin(mnt_dir, 'fioc')
-    cmdline = base_cmdline + \
-              [pjoin(basename, 'example', 'ioctl'), '-f', mnt_dir ]
+    cmdline = base_cmdline + [progname, '-f', mnt_dir ]
     mount_process = subprocess.Popen(cmdline)
     try:
         wait_for_mount(mount_process, mnt_dir)
@@ -206,11 +213,14 @@ def test_poll(tmpdir):
         umount(mount_process, mnt_dir)
 
 def test_null(tmpdir):
+    progname = pjoin(basename, 'example', 'null')
+    if not os.path.exists(progname):
+        pytest.skip('%s not built' % os.path.basename(progname))
+    
     mnt_file = str(tmpdir) + '/file'
     with open(mnt_file, 'w') as fh:
         fh.write('dummy')
-    cmdline = base_cmdline + [pjoin(basename, 'example', 'null'),
-               '-f', mnt_file ]
+    cmdline = base_cmdline + [ progname, '-f', mnt_file ]
     mount_process = subprocess.Popen(cmdline)
     def test_fn(name):
         return os.stat(name).st_size > 4000
@@ -227,6 +237,8 @@ def test_null(tmpdir):
         umount(mount_process, mnt_file)
 
 
+@pytest.mark.skipif(fuse_proto < (7,12),
+                    reason='not supported by running kernel')
 @pytest.mark.parametrize("notify", (True, False))
 def test_notify_inval_entry(tmpdir, notify):
     mnt_dir = str(tmpdir)
@@ -609,3 +621,8 @@ def tst_passthrough(src_dir, mnt_dir):
     assert name in os.listdir(src_dir)
     assert name in os.listdir(mnt_dir)
     assert os.stat(src_name) == os.stat(mnt_name)
+
+# avoid warning about unused import
+test_printcap
+
+    

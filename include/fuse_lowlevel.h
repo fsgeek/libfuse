@@ -1421,9 +1421,12 @@ int fuse_reply_bmap(fuse_req_t req, uint64_t idx);
  * From the 'stbuf' argument the st_ino field and bits 12-15 of the
  * st_mode field are used.  The other fields are ignored.
  *
- * Note: offsets do not necessarily represent physical offsets, and
- * could be any marker, that enables the implementation to find a
- * specific point in the directory stream.
+ * *off* should be any non-zero value that the filesystem can use to
+ * identify the current point in the directory stream. It does not
+ * need to be the actual physical position. A value of zero is
+ * reserved to mean "from the beginning", and should therefore never
+ * be used (the first call to fuse_add_direntry should be passed the
+ * offset of the second directory entry).
  *
  * @param req request handle
  * @param buf the point where the new entry will be added to the buffer
@@ -1440,18 +1443,7 @@ size_t fuse_add_direntry(fuse_req_t req, char *buf, size_t bufsize,
 /**
  * Add a directory entry to the buffer with the attributes
  *
- * Buffer needs to be large enough to hold the entry.  If it's not,
- * then the entry is not filled in but the size of the entry is still
- * returned.  The caller can check this by comparing the bufsize
- * parameter with the returned entry size.  If the entry size is
- * larger than the buffer size, the operation failed.
- *
- * From the 'stbuf' argument the st_ino field and bits 12-15 of the
- * st_mode field are used.  The other fields are ignored.
- *
- * Note: offsets do not necessarily represent physical offsets, and
- * could be any marker, that enables the implementation to find a
- * specific point in the directory stream.
+ * See documentation of `fuse_add_direntryt()` for more details.
  *
  * @param req request handle
  * @param buf the point where the new entry will be added to the buffer
@@ -1533,7 +1525,11 @@ int fuse_reply_poll(fuse_req_t req, unsigned revents);
 int fuse_lowlevel_notify_poll(struct fuse_pollhandle *ph);
 
 /**
- * Notify to invalidate cache for an inode
+ * Notify to invalidate cache for an inode.
+ *
+ * Added in FUSE protocol version 7.12. If the kernel does not support
+ * this (or a newer) version, the function will return -ENOSYS and do
+ * nothing.
  *
  * @param se the session object
  * @param ino the inode number
@@ -1549,9 +1545,13 @@ int fuse_lowlevel_notify_inval_inode(struct fuse_session *se, fuse_ino_t ino,
  * Notify to invalidate parent attributes and the dentry matching
  * parent/name
  *
- * To avoid a deadlock don't call this function from a filesystem operation and
- * don't call it with a lock held that can also be held by a filesystem
- * operation.
+ * To avoid a deadlock don't call this function from a filesystem
+ * operation and don't call it with a lock held that can also be held
+ * by a filesystem operation.
+ *
+ * Added in FUSE protocol version 7.12. If the kernel does not support
+ * this (or a newer) version, the function will return -ENOSYS and do
+ * nothing.
  *
  * @param se the session object
  * @param parent inode number
@@ -1563,18 +1563,21 @@ int fuse_lowlevel_notify_inval_entry(struct fuse_session *se, fuse_ino_t parent,
 				     const char *name, size_t namelen);
 
 /**
- * As of kernel 4.8, this function behaves like
- * fuse_lowlevel_notify_inval_entry() with the following additional
- * effect:
+ * This function behaves like fuse_lowlevel_notify_inval_entry() with
+ * the following additional effect (at least as of Linux kernel 4.8):
  *
  * If the provided *child* inode matches the inode that is currently
  * associated with the cached dentry, and if there are any inotify
  * watches registered for the dentry, then the watchers are informed
  * that the dentry has been deleted.
  *
- * To avoid a deadlock don't call this function from a filesystem operation and
- * don't call it with a lock held that can also be held by a filesystem
- * operation.
+ * To avoid a deadlock don't call this function from a filesystem
+ * operation and don't call it with a lock held that can also be held
+ * by a filesystem operation.
+ *
+ * Added in FUSE protocol version 7.18. If the kernel does not support
+ * this (or a newer) version, the function will return -ENOSYS and do
+ * nothing.
  *
  * @param se the session object
  * @param parent inode number
@@ -1601,6 +1604,10 @@ int fuse_lowlevel_notify_delete(struct fuse_session *se,
  * If this function returns an error, then the store wasn't fully
  * completed, but it may have been partially completed.
  *
+ * Added in FUSE protocol version 7.15. If the kernel does not support
+ * this (or a newer) version, the function will return -ENOSYS and do
+ * nothing.
+ *
  * @param se the session object
  * @param ino the inode number
  * @param offset the starting offset into the file to store to
@@ -1619,8 +1626,8 @@ int fuse_lowlevel_notify_store(struct fuse_session *se, fuse_ino_t ino,
  * the returned data.
  *
  * Only present pages are returned in the retrieve reply.  Retrieving
- * stops when it finds a non-present page and only data prior to that is
- * returned.
+ * stops when it finds a non-present page and only data prior to that
+ * is returned.
  *
  * If this function returns an error, then the retrieve will not be
  * completed and no reply will be sent.
@@ -1628,6 +1635,10 @@ int fuse_lowlevel_notify_store(struct fuse_session *se, fuse_ino_t ino,
  * This function doesn't change the dirty state of pages in the kernel
  * buffer.  For dirty pages the write() method will be called
  * regardless of having been retrieved previously.
+ *
+ * Added in FUSE protocol version 7.15. If the kernel does not support
+ * this (or a newer) version, the function will return -ENOSYS and do
+ * nothing.
  *
  * @param se the session object
  * @param ino the inode number
@@ -1749,6 +1760,7 @@ struct fuse_cmdline_opts {
 	int show_version;
 	int show_help;
 	int clone_fd;
+	unsigned int max_idle_threads;
 };
 
 /**
@@ -1846,11 +1858,15 @@ int fuse_session_loop(struct fuse_session *se);
  * fuse_session_loop().
  *
  * @param se the session
- * @param clone_fd whether to use separate device fds for each thread
- *                 (may increase performance)
+ * @param config session loop configuration 
  * @return see fuse_session_loop()
  */
-int fuse_session_loop_mt(struct fuse_session *se, int clone_fd);
+#if FUSE_USE_VERSION < 32
+int fuse_session_loop_mt_31(struct fuse_session *se, int clone_fd);
+#define fuse_session_loop_mt(se, clone_fd) fuse_session_loop_mt_31(se, clone_fd)
+#else
+int fuse_session_loop_mt(struct fuse_session *se, struct fuse_loop_config *config);
+#endif
 
 /**
  * Flag a session as terminated.
