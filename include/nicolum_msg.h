@@ -14,7 +14,8 @@
     NICCOLUM_NAME_MAP_REQUEST = 61, // map the name to a usable identifier
     NICCOLUM_NAME_MAP_RESPONSE, // respond to the name map request
     NICCOLUM_FUSE_OP_REQUEST,   // FUSE request
-    NICCOLUM_FUSE_OP_RESPONSE,  // FUSE response
+	NICCOLUM_FUSE_OP_RESPONSE,  // FUSE response
+	NICCOLUM_FUSE_NOTIFY, // FUSE notify
  } niccolum_message_type_t;
 
  //
@@ -52,4 +53,49 @@
      niccolum_key_t Key;
  } niccolum_name_map_request_t;
 
- 
+
+ struct niccolum_uuid_t {
+	uint32_t data1;
+	uint16_t data2;
+	uint16_t data3;
+	u_char data4[8];
+};
+typedef struct niccolum_uuid_t niccolum_uuid_t;
+
+typedef niccolum_uuid_t niccolum_buf_t;
+
+ #if 0
+ struct fuse_buf {
+	/**
+	 * Size of data in bytes
+	 */
+	size_t size;
+
+	/**
+	 * Buffer flags
+	 */
+	enum fuse_buf_flags flags;
+
+	/**
+	 * Memory pointer
+	 *
+	 * Used unless FUSE_BUF_IS_FD flag is set.
+	 */
+	void *mem;
+
+	/**
+	 * File descriptor
+	 *
+	 * Used if FUSE_BUF_IS_FD flag is set.
+	 */
+	int fd;
+
+	/**
+	 * File position
+	 *
+	 * Used if FUSE_BUF_FD_SEEK flag is set.
+	 */
+	off_t pos;
+};
+
+#endif // 0
