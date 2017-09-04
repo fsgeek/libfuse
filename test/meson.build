@@ -1,6 +1,3 @@
-# Attention, emacs, please use -*- mode: python -*-
-# (even though this isn't actually Python code)
-
 # Compile helper programs
 td = []
 foreach prog: [ 'test_write_cache', 'test_setattr' ]
@@ -18,7 +15,7 @@ test_scripts = [ 'conftest.py', 'pytest.ini', 'test_examples.py',
                  'util.py', 'test_ctests.py' ]
 td += custom_target('test_scripts', input: test_scripts,
                       output: test_scripts, build_by_default: true,
-                      command: ['cp', '-fPu', '--preserve=mode',
+                      command: ['cp', '-fPp',
                                 '@INPUT@', meson.current_build_dir() ])
 
 # Provide something helpful when running 'ninja test'

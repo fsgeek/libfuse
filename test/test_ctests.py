@@ -8,13 +8,18 @@ if __name__ == '__main__':
 import subprocess
 import pytest
 import platform
+import sys
 from distutils.version import LooseVersion
 from util import (wait_for_mount, umount, cleanup, base_cmdline,
-                  safe_sleep, basename, fuse_test_marker)
+                  safe_sleep, basename, fuse_test_marker, fuse_caps,
+                  fuse_proto)
 from os.path import join as pjoin
+import os.path
 
 pytestmark = fuse_test_marker()
 
+@pytest.mark.skipif('FUSE_CAP_WRITEBACK_CACHE' not in fuse_caps,
+                    reason='not supported by running kernel')
 @pytest.mark.parametrize("writeback", (False, True))
 def test_write_cache(tmpdir, writeback):
     if writeback and LooseVersion(platform.release()) < '3.14':
@@ -31,9 +36,12 @@ def test_write_cache(tmpdir, writeback):
     subprocess.check_call(cmdline)
 
 
-@pytest.mark.parametrize("name",
-                         ('notify_inval_inode',
-                          'notify_store_retrieve'))
+names = [ 'notify_inval_inode', 'invalidate_path' ]
+if fuse_proto >= (7,15):
+    names.append('notify_store_retrieve')
+@pytest.mark.skipif(fuse_proto < (7,12),
+                    reason='not supported by running kernel')
+@pytest.mark.parametrize("name", names)
 @pytest.mark.parametrize("notify", (True, False))
 def test_notify1(tmpdir, name, notify):
     mnt_dir = str(tmpdir)
@@ -61,4 +69,29 @@ def test_notify1(tmpdir, name, notify):
     else:
         umount(mount_process, mnt_dir)
 
-    
+@pytest.mark.skipif(fuse_proto < (7,12),
+                    reason='not supported by running kernel')
+@pytest.mark.parametrize("notify", (True, False))
+def test_notify_file_size(tmpdir, notify):
+    mnt_dir = str(tmpdir)
+    cmdline = base_cmdline + \
+              [ pjoin(basename, 'example', 'invalidate_path'),
+                '-f', '--update-interval=1', mnt_dir ]
+    if not notify:
+        cmdline.append('--no-notify')
+    mount_process = subprocess.Popen(cmdline)
+    try:
+        wait_for_mount(mount_process, mnt_dir)
+        filename = pjoin(mnt_dir, 'growing')
+        size = os.path.getsize(filename)
+        safe_sleep(2)
+        new_size = os.path.getsize(filename)
+        if notify:
+            assert new_size > size
+        else:
+            assert new_size == size
+    except:
+        cleanup(mnt_dir)
+        raise
+    else:
+        umount(mount_process, mnt_dir)

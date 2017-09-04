@@ -1,11 +1,19 @@
-# Attention, emacs, please use -*- mode: python -*-
-# (even though this isn't actually Python code)
+examples = [ 'passthrough', 'passthrough_fh',
+             'hello', 'hello_ll', 'printcap',
+             'ioctl_client', 'poll_client', 'ioctl',
+             'cuse', 'cuse_client' ]
 
-examples = [ 'passthrough', 'passthrough_fh', 'null', 'hello', 'hello_ll',
-             'ioctl', 'ioctl_client', 'poll_client',
-             'passthrough_ll', 'cuse', 'cuse_client' ]
+if not platform.endswith('bsd')
+    examples += 'passthrough_ll'
+
+    # According to Conrad Meyer <cem@freebsd.org>, FreeBSD doesn't
+    # support mounting files, This is enforced in vfs_domount_first()
+    # with the v_type != VDIR check.
+    examples += [ 'null' ]
+endif
 
 threaded_examples = [ 'notify_inval_inode',
+                      'invalidate_path',
                       'notify_store_retrieve',
                       'notify_inval_entry',
                       'poll' ]

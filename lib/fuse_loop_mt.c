@@ -48,6 +48,7 @@ struct fuse_mt {
 	int exit;
 	int error;
 	int clone_fd;
+	int max_idle;
 };
 
 static struct fuse_chan *fuse_chan_new(int fd)
@@ -108,9 +109,11 @@ static void list_del_worker(struct fuse_worker *w)
 	next->prev = prev;
 }
 
+typedef int (*fuse_generic_receive_buf_int)(struct fuse_session *se, struct fuse_buf *buf, struct fuse_chan *ch);
+
 static int fuse_loop_start_thread(struct fuse_mt *mt);
 
-static void *fuse_do_work(void *data)
+static void *fuse_generic_do_work(void *data, fuse_generic_receive_buf_int generic_receive_buf_int)
 {
 	struct fuse_worker *w = (struct fuse_worker *) data;
 	struct fuse_mt *mt = w->mt;
@@ -120,14 +123,14 @@ static void *fuse_do_work(void *data)
 		int res;
 
 		pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
-		res = fuse_session_receive_buf_int(mt->se, &w->fbuf, w->ch);
+		res = generic_receive_buf_int(mt->se, &w->fbuf, w->ch);
 		pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
 		if (res == -EINTR)
 			continue;
 		if (res <= 0) {
 			if (res < 0) {
 				fuse_session_exit(mt->se);
-				mt->error = -1;
+				mt->error = res;
 			}
 			break;
 		}
@@ -161,7 +164,7 @@ static void *fuse_do_work(void *data)
 		pthread_mutex_lock(&mt->lock);
 		if (!isforget)
 			mt->numavail++;
-		if (mt->numavail > 10) {
+		if (mt->numavail > mt->max_idle) {
 			if (mt->exit) {
 				pthread_mutex_unlock(&mt->lock);
 				return NULL;
@@ -184,6 +187,12 @@ static void *fuse_do_work(void *data)
 
 	return NULL;
 }
+
+static void *fuse_do_work(void *data)
+{
+	return fuse_generic_do_work(data, fuse_session_receive_buf_int);	
+}
+
 
 int fuse_start_thread(pthread_t *thread_id, void *(*func)(void *), void *arg)
 {
@@ -300,7 +309,9 @@ static void fuse_join_worker(struct fuse_mt *mt, struct fuse_worker *w)
 	free(w);
 }
 
-int fuse_session_loop_mt(struct fuse_session *se, int clone_fd)
+int fuse_session_loop_mt_32(struct fuse_session *se, struct fuse_loop_config *config);
+FUSE_SYMVER(".symver fuse_session_loop_mt_32,fuse_session_loop_mt@@FUSE_3.2");
+int fuse_session_loop_mt_32(struct fuse_session *se, struct fuse_loop_config *config)
 {
 	int err;
 	struct fuse_mt mt;
@@ -308,10 +319,11 @@ int fuse_session_loop_mt(struct fuse_session *se, int clone_fd)
 
 	memset(&mt, 0, sizeof(struct fuse_mt));
 	mt.se = se;
-	mt.clone_fd = clone_fd;
+	mt.clone_fd = config->clone_fd;
 	mt.error = 0;
 	mt.numworker = 0;
 	mt.numavail = 0;
+	mt.max_idle = config->max_idle_threads;
 	mt.main.thread_id = pthread_self();
 	mt.main.prev = mt.main.next = &mt.main;
 	sem_init(&mt.finish, 0, 0);
@@ -343,4 +355,14 @@ int fuse_session_loop_mt(struct fuse_session *se, int clone_fd)
 		err = se->error;
 	fuse_session_reset(se);
 	return err;
+}
+
+int fuse_session_loop_mt_31(struct fuse_session *se, int clone_fd);
+FUSE_SYMVER(".symver fuse_session_loop_mt_31,fuse_session_loop_mt@FUSE_3.1");
+int fuse_session_loop_mt_31(struct fuse_session *se, int clone_fd)
+{
+	struct fuse_loop_config config;
+	config.clone_fd = clone_fd;
+	config.max_idle_threads = 10;
+	return fuse_session_loop_mt_32(se, &config);
 }

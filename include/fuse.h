@@ -66,6 +66,12 @@ enum fuse_fill_dir_flags {
 
 /** Function to add an entry in a readdir() operation
  *
+ * The *off* parameter can be any non-zero value that enableds the
+ * filesystem to identify the current point in the directory
+ * stream. It does not need to be the actual physical position. A
+ * value of zero is reserved to indicate that seeking in directories
+ * is not supported.
+ * 
  * @param buf the buffer passed to the readdir() operation
  * @param name the file name of the directory entry
  * @param stat file attributes, can be NULL
@@ -380,20 +386,53 @@ struct fuse_operations {
 	 */
 	int (*truncate) (const char *, off_t, struct fuse_file_info *fi);
 
-	/** File open operation
+	/** Open a file
 	 *
-	 * No creation (O_CREAT, O_EXCL) and by default also no
-	 * truncation (O_TRUNC) flags will be passed to open(). If an
-	 * application specifies O_TRUNC, fuse first calls truncate()
-	 * and then open(). Only if 'atomic_o_trunc' has been
-	 * specified and kernel version is 2.6.24 or later, O_TRUNC is
-	 * passed on to open.
+	 * Open flags are available in fi->flags. The following rules
+	 * apply.
 	 *
-	 * Unless the 'default_permissions' mount option is given,
-	 * open should check if the operation is permitted for the
-	 * given flags. Optionally open may also return an arbitrary
-	 * filehandle in the fuse_file_info structure, which will be
-	 * passed to all file operations.
+	 *  - Creation (O_CREAT, O_EXCL, O_NOCTTY) flags will be
+	 *    filtered out / handled by the kernel.
+	 *
+	 *  - Access modes (O_RDONLY, O_WRONLY, O_RDWR) should be used
+	 *    by the filesystem to check if the operation is
+	 *    permitted.  If the ``-o default_permissions`` mount
+	 *    option is given, this check is already done by the
+	 *    kernel before calling open() and may thus be omitted by
+	 *    the filesystem.
+	 *
+	 *  - When writeback caching is enabled, the kernel may send
+	 *    read requests even for files opened with O_WRONLY. The
+	 *    filesystem should be prepared to handle this.
+	 *
+	 *  - When writeback caching is disabled, the filesystem is
+	 *    expected to properly handle the O_APPEND flag and ensure
+	 *    that each write is appending to the end of the file.
+	 * 
+         *  - When writeback caching is enabled, the kernel will
+	 *    handle O_APPEND. However, unless all changes to the file
+	 *    come through the kernel this will not work reliably. The
+	 *    filesystem should thus either ignore the O_APPEND flag
+	 *    (and let the kernel handle it), or return an error
+	 *    (indicating that reliably O_APPEND is not available).
+	 *
+	 * Filesystem may store an arbitrary file handle (pointer,
+	 * index, etc) in fi->fh, and use this in other all other file
+	 * operations (read, write, flush, release, fsync).
+	 *
+	 * Filesystem may also implement stateless file I/O and not store
+	 * anything in fi->fh.
+	 *
+	 * There are also some flags (direct_io, keep_cache) which the
+	 * filesystem may set in fi, to change the way the file is opened.
+	 * See fuse_file_info structure in <fuse_common.h> for more details.
+	 *
+	 * If this request is answered with an error code of ENOSYS
+	 * and FUSE_CAP_NO_OPEN_SUPPORT is set in
+	 * `fuse_conn_info.capable`, this is treated as success and
+	 * future calls to open will also succeed without being send
+	 * to the filesystem process.
+	 *
 	 */
 	int (*open) (const char *, struct fuse_file_info *);
 
@@ -795,6 +834,19 @@ struct fuse_context {
  * ----------------------------------------------------------- */
 
 /**
+ * Print available options (high- and low-level) to stdout.  This is
+ * not an exhaustive list, but includes only those options that may be
+ * of interest to an end-user of a file system.
+ *
+ * The function looks at the argument vector only to determine if
+ * there are additional modules to be loaded (module=foo option),
+ * and attempts to call their help functions as well.
+ *
+ * @param args the argument vector.
+ */
+void fuse_lib_help(struct fuse_args *args);
+
+/**
  * Create a new FUSE filesystem.
  *
  * This function accepts most file-system independent mount options
@@ -821,8 +873,14 @@ struct fuse_context {
  *            `struct fuse_operations.init` handler.
  * @return the created FUSE handle
  */
+#if FUSE_USE_VERSION == 30
+struct fuse *fuse_new_30(struct fuse_args *args, const struct fuse_operations *op,
+			 size_t op_size, void *private_data);
+#define fuse_new(args, op, size, data) fuse_new_30(args, op, size, data)
+#else
 struct fuse *fuse_new(struct fuse_args *args, const struct fuse_operations *op,
 		      size_t op_size, void *private_data);
+#endif
 
 /**
  * Mount a FUSE file system.
@@ -906,13 +964,17 @@ void fuse_exit(struct fuse *f);
  * in the callback function of fuse_operations is also thread-safe.
  *
  * @param f the FUSE handle
- * @param clone_fd whether to use separate device fds for each thread
- *                 (may increase performance)
+ * @param config loop configuration
  * @return see fuse_session_loop()
  *
  * See also: fuse_loop()
  */
-int fuse_loop_mt(struct fuse *f, int clone_fd);
+#if FUSE_USE_VERSION < 32
+int fuse_loop_mt_31(struct fuse *f, int clone_fd);
+#define fuse_loop_mt(f, clone_fd) fuse_loop_mt_31(f, clone_fd)
+#else
+int fuse_loop_mt(struct fuse *f, struct fuse_loop_config *config);
+#endif
 
 /**
  * Get the current context
@@ -950,6 +1012,19 @@ int fuse_getgroups(int size, gid_t list[]);
  * @return 1 if the request has been interrupted, 0 otherwise
  */
 int fuse_interrupted(void);
+
+/**
+ * Invalidates cache for the given path.
+ *
+ * This calls fuse_lowlevel_notify_inval_inode internally.
+ *
+ * @return 0 on successful invalidation, negative error value otherwise.
+ *         This routine may return -ENOENT to indicate that there was
+ *         no entry to be invalidated, e.g., because the path has not
+ *         been seen before or has been forgotten; this should not be
+ *         considered to be an error.
+ */
+int fuse_invalidate_path(struct fuse *f, const char *path);
 
 /**
  * The real main function

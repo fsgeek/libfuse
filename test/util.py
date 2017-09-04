@@ -5,8 +5,31 @@ import os
 import stat
 import time
 from os.path import join as pjoin
+import sys
+import re
 
 basename = pjoin(os.path.dirname(__file__), '..')
+
+def test_printcap():
+    cmdline = base_cmdline + [ pjoin(basename, 'example', 'printcap') ]
+    proc = subprocess.Popen(cmdline, stdout=subprocess.PIPE,
+                            universal_newlines=True)
+    (stdout, _) = proc.communicate(30)
+    assert proc.returncode == 0
+
+    proto = None
+    caps = set()
+    for line in stdout.split('\n'):
+        if line.startswith('\t'):
+            caps.add(line.strip())
+            continue
+
+        hit = re.match(r'Protocol version: (\d+)\.(\d+)$', line) 
+        if hit:
+            proto = (int(hit.group(1)), int(hit.group(2)))
+
+    return (proto, caps)
+
 
 def wait_for_mount(mount_process, mnt_dir,
                    test_fn=os.path.ismount):
@@ -23,21 +46,28 @@ def wait_for_mount(mount_process, mnt_dir,
 def cleanup(mnt_dir):
     # Don't bother trying Valgrind if things already went wrong
 
-    subprocess.call([pjoin(basename, 'util', 'fusermount3'),
-                     '-z', '-u', mnt_dir],
-                    stdout=subprocess.DEVNULL,
+    if 'bsd' in sys.platform:
+        cmd = [ 'umount', '-f', mnt_dir ]
+    else:
+        cmd = [pjoin(basename, 'util', 'fusermount3'),
+                         '-z', '-u', mnt_dir]
+    subprocess.call(cmd, stdout=subprocess.DEVNULL,
                     stderr=subprocess.STDOUT)
 
 def umount(mount_process, mnt_dir):
-    # fusermount3 will be setuid root, so we can only trace it with
-    # valgrind if we're root
-    if os.getuid() == 0:
-        cmdline = base_cmdline
-    else:
-        cmdline = []
 
-    cmdline = cmdline + [ pjoin(basename, 'util', 'fusermount3'),
-                          '-z', '-u', mnt_dir ]
+    if 'bsd' in sys.platform:
+        cmdline = [ 'umount', mnt_dir ]
+    else:
+        # fusermount3 will be setuid root, so we can only trace it with
+        # valgrind if we're root
+        if os.getuid() == 0:
+            cmdline = base_cmdline
+        else:
+            cmdline = []
+        cmdline = cmdline + [ pjoin(basename, 'util', 'fusermount3'),
+                              '-z', '-u', mnt_dir ]
+
     subprocess.check_call(cmdline)
     assert not os.path.ismount(mnt_dir)
 
@@ -79,6 +109,9 @@ def fuse_test_marker():
 
     skip = lambda x: pytest.mark.skip(reason=x)
 
+    if 'bsd' in sys.platform:
+        return pytest.mark.uses_fuse()
+
     with subprocess.Popen(['which', 'fusermount3'], stdout=subprocess.PIPE,
                           universal_newlines=True) as which:
         fusermount_path = which.communicate()[0].strip()
@@ -114,3 +147,11 @@ else:
 
 # Try to use local fusermount3
 os.environ['PATH'] = '%s:%s' % (pjoin(basename, 'util'), os.environ['PATH'])
+
+try:
+    (fuse_proto, fuse_caps) = test_printcap()
+except:
+    # Rely on test to raise error
+    fuse_proto = (0,0)
+    fuse_caps = set()
+

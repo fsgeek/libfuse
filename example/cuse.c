@@ -31,7 +31,7 @@
  */
 
 
-#define FUSE_USE_VERSION 30
+#define FUSE_USE_VERSION 31
 
 #include <config.h>
 
@@ -233,7 +233,7 @@ static void cusexmp_ioctl(fuse_req_t req, int cmd, void *arg,
 
 	case FIOC_READ:
 		is_read = 1;
-		/* no break */
+		/* fall through */
 	case FIOC_WRITE:
 		fioc_do_rw(req, arg, in_buf, in_bufsz, out_bufsz, is_read);
 		break;

@@ -1957,7 +1957,8 @@ static void do_init(fuse_req_t req, fuse_ino_t nodeid, const void *inarg)
 	LL_SET_DEFAULT(se->op.flock, FUSE_CAP_FLOCK_LOCKS);
 	LL_SET_DEFAULT(se->op.readdirplus, FUSE_CAP_READDIRPLUS);
 	LL_SET_DEFAULT(se->op.readdirplus, FUSE_CAP_READDIRPLUS_AUTO);
-
+	se->conn.time_gran = 1;
+	
 	if (bufsize < FUSE_MIN_READ_BUFFER) {
 		fprintf(stderr, "fuse: warning: buffer size too small: %zu\n",
 			bufsize);
@@ -1974,7 +1975,8 @@ static void do_init(fuse_req_t req, fuse_ino_t nodeid, const void *inarg)
 
 	if (se->conn.want & (~se->conn.capable)) {
 		fprintf(stderr, "fuse: error: filesystem requested capabilites "
-			"that are not supported by kernel, aborting.\n");
+			"0x%x that are not supported by kernel, aborting.\n",
+			se->conn.want & (~se->conn.capable));
 		fuse_reply_err(req, EPROTO);
 		se->error = -EPROTO;
 		fuse_session_exit(se);
@@ -2018,6 +2020,8 @@ static void do_init(fuse_req_t req, fuse_ino_t nodeid, const void *inarg)
 		outarg.flags |= FUSE_ASYNC_DIO;
 	if (se->conn.want & FUSE_CAP_WRITEBACK_CACHE)
 		outarg.flags |= FUSE_WRITEBACK_CACHE;
+	if (se->conn.want & FUSE_CAP_POSIX_ACL)
+		outarg.flags |= FUSE_POSIX_ACL;
 	outarg.max_readahead = se->conn.max_readahead;
 	outarg.max_write = se->conn.max_write;
 	if (se->conn.proto_minor >= 13) {
@@ -2158,6 +2162,9 @@ int fuse_lowlevel_notify_inval_inode(struct fuse_session *se, fuse_ino_t ino,
 	if (!se)
 		return -EINVAL;
 
+	if (se->conn.proto_major < 6 || se->conn.proto_minor < 12)
+		return -ENOSYS;
+	
 	outarg.ino = ino;
 	outarg.off = off;
 	outarg.len = len;
@@ -2176,6 +2183,9 @@ int fuse_lowlevel_notify_inval_entry(struct fuse_session *se, fuse_ino_t parent,
 
 	if (!se)
 		return -EINVAL;
+	
+	if (se->conn.proto_major < 6 || se->conn.proto_minor < 12)
+		return -ENOSYS;
 
 	outarg.parent = parent;
 	outarg.namelen = namelen;
@@ -2199,7 +2209,7 @@ int fuse_lowlevel_notify_delete(struct fuse_session *se,
 	if (!se)
 		return -EINVAL;
 
-	if (se->conn.proto_minor < 18)
+	if (se->conn.proto_major < 6 || se->conn.proto_minor < 18)
 		return -ENOSYS;
 
 	outarg.parent = parent;
@@ -2228,7 +2238,7 @@ int fuse_lowlevel_notify_store(struct fuse_session *se, fuse_ino_t ino,
 	if (!se)
 		return -EINVAL;
 
-	if (se->conn.proto_minor < 15)
+	if (se->conn.proto_major < 6 || se->conn.proto_minor < 15)
 		return -ENOSYS;
 
 	out.unique = 0;
@@ -2306,7 +2316,7 @@ int fuse_lowlevel_notify_retrieve(struct fuse_session *se, fuse_ino_t ino,
 	if (!se)
 		return -EINVAL;
 
-	if (se->conn.proto_minor < 15)
+	if (se->conn.proto_major < 6 || se->conn.proto_minor < 15)
 		return -ENOSYS;
 
 	rreq = malloc(sizeof(*rreq));
@@ -3023,6 +3033,7 @@ out_free:
  */
 int fuse_req_getgroups(fuse_req_t req, int size, gid_t list[])
 {
+	(void) req; (void) size; (void) list;
 	return -ENOSYS;
 }
 #endif

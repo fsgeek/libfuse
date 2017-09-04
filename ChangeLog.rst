@@ -1,12 +1,88 @@
 Unreleased Changes
 ==================
 
+* Support for building with autotools has been dropped.
+  
+* Added new `fuse_invalidate_path()` routine for cache invalidation
+  from the high-level FUSE API, along with an example and tests.
+  
+* There's a new `printcap` example that can be used to determine the
+  capabilities of the running kernel.
+  
+* `fuse_loop_mt()` now returns the minus the actual errno if there was
+  an error (instead of just -1).
+  
+* `fuse_loop()` no longer returns a positive value if the filesystem
+  loop was terminated without errors or signals.
+  
+* Improved documentation of `fuse_lowlevel_notify_*` functions.
+
+* `fuse_lowlevel_notify_inval_inode()` and
+  `fuse_lowlevel_notify_inval_entry()` now return -ENOSYS instead of
+  an undefined error if the function is not supported by the kernel.
+  
+* Documented the special meaning of the *zero* offset for the
+  fuse_fill_dir_t function.
+  
+* The `passthrough_fh` example now works under FreeBSD.
+  
+* libfuse can now be build without libiconv.
+
+* Fixed support for `FUSE_CAP_POSIX_ACL`: setting this capability
+  flag had no effect in the previous versions of libfuse 3.x;
+  now ACLs should actually work.
+
+* Fixed a number of compilation problems under FreeBSD.
+
+* Fixed installation directory for udev rules.  
+
+* Fixed compilation with LTO.
+
+libfuse 3.1.1 (2017-08-06)
+==========================
+
+* Documentation: clarified how filesystems are supposed to process
+  open() and create() flags (see include/fuse_lowlevel.h).
+
+* Fixed a compilation problem of the passthrough_ll example on
+  32 bit systems (wrong check and wrong error message).
+
+* pkg-config is now used to determine the proper directory for
+  udev rules.
+
+* Fixed a symbol versioning problem that resulted in very strange
+  failures (segfaults, unexpected behavior) in different situations.
+
+* Fixed a test failure when /tmp is on btrfs.
+
+* The maximum number of idle worker threads used by `fuse_loop_mt()`
+  is now configurable.
+
+* `fuse_loop_mt()` and `fuse_session_loop_mt()` now take a
+  `struct fuse_loop_config` parameter that supersedes the *clone_fd*
+  parameter.
+
+* Incorporated several patches from the FreeBSD port. libfuse should
+  now compile under FreeBSD without the need for patches.
+
+* The passthrough_ll example now supports writeback caching.
+
+libfuse 3.1.0 (2017-07-08)
+==========================
+
+* Added new `fuse_lib_help()` function. File-systems that previously
+  passed a ``--help`` option to `fuse_new()` must now process the
+  ``--help`` option internally and call `fuse_lib_help()` to print the
+  help for generic FUSE options.
+* Fixed description of the `fuse_conn_info->time_gran`. The default
+  value of zero actually corresponds to full nanosecond resolution,
+  not one second resolution.
 * The init script is now installed into the right location
-  ($DESTDIR/etc/init.d rather than $prefix/$sysconfdir/init.d) 
+  (``$DESTDIR/etc/init.d`` rather than ``$prefix/$sysconfdir/init.d``)
 * The `example/passthrough_ll` filesystem now supports creating
   and writing to files.
 * `fuse_main()` / `fuse_remove_signal_handlers()`: do not reset
-  `SIGPIPE` handler to `SIG_DFL` it was not set by us.
+  `SIGPIPE` handler to `SIG_DFL` if it was not set by us.
 * Documented the `RENAME_EXCHANGE` and `RENAME_NOREPLACE` flags that
   may be passed to the `rename` handler of both the high- and
   low-level API. Filesystem authors are strongly encouraged to check
@@ -269,14 +345,14 @@ libfuse 3.0.0 (2016-12-08)
         fuse = fuse_new(&args, op, op_size, user_data);
         se = fuse_get_session(fuse);
         fuse_set_signal_handlers(se);
-        fuse_mount(se, mountpoint);
+        fuse_mount(fuse, mountpoint);
         fuse_daemonize(fg);
          if (mt)
             fuse_loop_mt(fuse);
         else
             fuse_loop(fuse);
         fuse_remove_signal_handlers(se);
-        fuse_unmount(se);
+        fuse_unmount(fuse);
         fuse_destroy(fuse);
 
   File systems that use `fuse_main` are not affected by this change.
