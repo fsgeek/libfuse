@@ -20,6 +20,7 @@ struct fuse_req {
 	struct fuse_chan *ch;
 	int interrupted;
 	unsigned int ioctl_64bit : 1;
+	unsigned int niccolum : 1;
 	union {
 		struct {
 			uint64_t unique;
