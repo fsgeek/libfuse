@@ -1,0 +1,11 @@
+Build started at 2017-07-14T09:19:38.305882
+Python binary: /usr/bin/python3
+Python system: Linux
+The Meson build system
+Version: 0.39.1
+Source dir: /home/tony/ubc/niccolum/src/libfuse/test
+Build dir: /home/tony/ubc/niccolum/src/libfuse/test/build-gcc
+Build type: native build
+
+Meson encountered an error:
+First statement must be a call to project

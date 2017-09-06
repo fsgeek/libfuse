@@ -741,6 +741,8 @@ int fuse_set_signal_handlers(struct fuse_session *se);
  */
 void fuse_remove_signal_handlers(struct fuse_session *se);
 
+
+
 /* ----------------------------------------------------------- *
  * Compatibility stuff					       *
  * ----------------------------------------------------------- */

@@ -2360,6 +2360,29 @@ const struct fuse_ctx *fuse_req_ctx(fuse_req_t req)
 	return &req->ctx;
 }
 
+
+/* Begin Niccolum changes */
+
+/**
+ * Set the provider for the given request.
+ */
+void fuse_set_provider(fuse_req_t req, int niccolum)
+{
+	if (niccolum) {
+		req->niccolum = 1;
+	}
+	else {
+		req->niccolum = 0;
+	} 
+}
+
+ int fuse_get_provider(fuse_req_t req)
+ {
+	return req->niccolum;
+ }
+
+ /* End Niccolum changes */
+
 void fuse_req_interrupt_func(fuse_req_t req, fuse_interrupt_func_t func,
 			     void *data)
 {

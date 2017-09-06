@@ -1821,6 +1821,17 @@ void fuse_session_remove_statsDir(struct fuse_session *se);
 char *fuse_session_statsDir(struct fuse_session *se);
 #endif // OMIT_SBU_FSL_CODE
 
+
+/* Begin Niccolum changes */
+
+/**
+ * Set the provider for the given request.
+ */
+ void fuse_set_provider(fuse_req_t req, int niccolum);
+ int fuse_get_provider(fuse_req_t req);
+ 
+ /* End Niccolum changes */
+
 /**
  * Create a low level session.
  *
