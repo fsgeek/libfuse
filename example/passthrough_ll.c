@@ -525,6 +525,10 @@ static void lo_write_buf(fuse_req_t req, fuse_ino_t ino,
 		fuse_reply_write(req, (size_t) res);
 }
 
+/* BEGIN NICCOLUM CODE */
+
+static int niccolum_mt = 1;
+
 static void niccolum_init(void *userdata, struct fuse_conn_info *conn);
 static void niccolum_init(void *userdata, struct fuse_conn_info *conn)
 {
@@ -655,6 +659,20 @@ static struct fuse_session *niccolum_session_new(struct fuse_args *args,
 	return fuse_session_new(args, &niccolum_ops, op_size, userdata);
 }
 
+int niccolum_session_loop(struct fuse_session *se);
+int niccolum_session_loop(struct fuse_session *se)
+{
+	niccolum_mt = 0;
+	return fuse_session_loop(se);
+}
+
+int niccolum_session_loop_mt(struct fuse_session *se, int clone_fd);
+int niccolum_session_loop_mt(struct fuse_session *se, int clone_fd)
+{
+	niccolum_mt = 1;
+	return fuse_session_loop_mt(se, clone_fd);
+}
+
 /* END NICCOLUM CODE */
 
 static struct fuse_lowlevel_ops lo_oper = {
@@ -725,9 +743,9 @@ int main(int argc, char *argv[])
 
 	/* Block until ctrl+c or fusermount -u */
 	if (opts.singlethread)
-		ret = fuse_session_loop(se);
+		ret = niccolum_session_loop(se);
 	else
-		ret = fuse_session_loop_mt(se, opts.clone_fd);
+		ret = niccolum_session_loop_mt(se, opts.clone_fd);
 
 	fuse_session_unmount(se);
 err_out3:
