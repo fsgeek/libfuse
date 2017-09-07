@@ -2935,6 +2935,10 @@ struct fuse_session *fuse_session_new(struct fuse_args *args,
 	se->message_queue_name = "/niccolum";
 	/* create it if it does not exist.  This permission is permissive and should be tightened to write only for everyone else */
 	se->message_queue_descriptor = mq_open(se->message_queue_name, O_RDONLY | O_CREAT, 0666, NULL);
+	if (se->message_queue_descriptor < 0) {
+		fprintf(stderr, "fuse (niccolum): failed to create message queue: %s\n", strerror(errno));
+		goto out6;
+	}
 	/* END NICCOLUM CODE */
 
 	memcpy(&se->op, op, op_size);
@@ -2944,6 +2948,10 @@ struct fuse_session *fuse_session_new(struct fuse_args *args,
 	se->mo = mo;
 	return se;
 
+	/* BEGIN NICCOLUM CODE */
+out6:
+	pthread_key_delete(se->pipe_key);
+	/* END NICCOLUM CODE */
 out5:
 	pthread_mutex_destroy(&se->lock);
 out4:
