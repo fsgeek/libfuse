@@ -25,7 +25,9 @@ struct fuse_req {
 	struct fuse_chan *ch;
 	int interrupted;
 	unsigned int ioctl_64bit : 1;
+	/* BEGIN NICCOLUM CHANGE */
 	unsigned int niccolum : 1;
+	/* END NICCOLUM CHANGE */	
 	union {
 		struct {
 			uint64_t unique;
@@ -76,6 +78,10 @@ struct fuse_session {
 	long long unsigned int processing[46][33];
 	char *statsDir;
 #endif // SBU_FSL_INSTRUMENT
+	/* BEGIN NICCOLUM CHANGE */
+	const char *message_queue_name;
+	int message_queue_descriptor;
+	/* END NICCOLUM CHANGE */
 };
 
 struct fuse_chan {

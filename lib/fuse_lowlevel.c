@@ -27,6 +27,7 @@
 #include <assert.h>
 #include <sys/file.h>
 #include <time.h>
+#include <mqueue.h>
 
 #ifndef F_LINUX_SPECIFIC_BASE
 #define F_LINUX_SPECIFIC_BASE       1024
@@ -2927,6 +2928,14 @@ struct fuse_session *fuse_session_new(struct fuse_args *args,
 #if !defined(OMIT_SBU_FSL_CODE)
 	pthread_spin_init(&se->fsl_lock, PTHREAD_PROCESS_PRIVATE);
 #endif // OMIT_SBU_FSL_CODE
+
+	/* BEGIN NICCOLUM CODE */
+	/* note that for now, I'm hard coding these names.  They should be
+	   computed and generalized */
+	se->message_queue_name = "/niccolum";
+	/* create it if it does not exist.  This permission is permissive and should be tightened to write only for everyone else */
+	se->message_queue_descriptor = mq_open(se->message_queue_name, O_RDONLY | O_CREAT, 0666, NULL);
+	/* END NICCOLUM CODE */
 
 	memcpy(&se->op, op, op_size);
 	se->owner = getuid();
