@@ -525,156 +525,6 @@ static void lo_write_buf(fuse_req_t req, fuse_ino_t ino,
 		fuse_reply_write(req, (size_t) res);
 }
 
-/* BEGIN NICCOLUM CODE */
-
-static int niccolum_mt = 1;
-
-static void niccolum_init(void *userdata, struct fuse_conn_info *conn);
-static void niccolum_init(void *userdata, struct fuse_conn_info *conn)
-{
-	return lo_init(userdata, conn);
-}
-
-static void niccolum_lookup(fuse_req_t req, fuse_ino_t parent, const char *name);
-static void niccolum_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
-{
-	fuse_set_provider(req, 0);
-	/* TODO: add to lookup table? */
-	return lo_lookup(req, parent, name);
-}
-
-static void niccolum_forget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup);
-static void niccolum_forget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup)
-{
-	fuse_set_provider(req, 0);
-	/* TODO: remove from lookup table? */
-	return lo_forget(req, ino, nlookup);
-}
-
-static void niccolum_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-static void niccolum_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
-{
-	fuse_set_provider(req, 0);
-	return lo_getattr(req, ino, fi);
-}
-
-static void niccolum_readlink(fuse_req_t req, fuse_ino_t ino);
-static void niccolum_readlink(fuse_req_t req, fuse_ino_t ino) 
-{
-	fuse_set_provider(req, 0);
-	return lo_readlink(req, ino);
-}
-
-static void niccolum_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-static void niccolum_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
-{
-	fuse_set_provider(req, 0);
-	return lo_opendir(req, ino, fi);
-}
-
-static void niccolum_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t offset, struct fuse_file_info *fi);
-static void niccolum_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t offset, struct fuse_file_info *fi)
-{
-	fuse_set_provider(req, 0);
-	return lo_readdir(req, ino, size, offset, fi);
-}
-
-static void niccolum_readdirplus(fuse_req_t req, fuse_ino_t ino, size_t size,	off_t offset, struct fuse_file_info *fi);
-static void niccolum_readdirplus(fuse_req_t req, fuse_ino_t ino, size_t size,	off_t offset, struct fuse_file_info *fi)
-{
-	fuse_set_provider(req, 0);
-	return lo_readdirplus(req, ino, size, offset, fi);
-}
-
-static void niccolum_create(fuse_req_t req, fuse_ino_t parent, const char *name,	mode_t mode, struct fuse_file_info *fi);
-static void niccolum_create(fuse_req_t req, fuse_ino_t parent, const char *name,	mode_t mode, struct fuse_file_info *fi)
-{
-	fuse_set_provider(req, 0);
-	return lo_create(req, parent, name, mode, fi);
-}
-
-static void niccolum_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-static void niccolum_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
-{
-	fuse_set_provider(req, 0);
-	return lo_open(req, ino, fi);
-}
-
-static void niccolum_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-static void niccolum_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
-{
-	fuse_set_provider(req, 0);
-	return lo_release(req, ino, fi);
-}
-
-static void niccolum_releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-static void niccolum_releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
-{
-	fuse_set_provider(req, 0);
-	return lo_releasedir(req, ino, fi);
-}
-
-static void niccolum_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t offset, struct fuse_file_info *fi);
-static void niccolum_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t offset, struct fuse_file_info *fi)
-{
-	fuse_set_provider(req, 0);
-	return lo_read(req, ino, size, offset, fi);
-}
-
-static void niccolum_write_buf(fuse_req_t req, fuse_ino_t ino, struct fuse_bufvec *in_buf, off_t off,	struct fuse_file_info *fi);
-static void niccolum_write_buf(fuse_req_t req, fuse_ino_t ino, struct fuse_bufvec *in_buf, off_t off,	struct fuse_file_info *fi)
-{
-	fuse_set_provider(req, 0);
-	return lo_write_buf(req, ino, in_buf, off, fi);
-}
-
-
-/* BEGIN NICCOLUM CODE */
-static struct fuse_session *niccolum_session_new(struct fuse_args *args,
-	const struct fuse_lowlevel_ops *op,
-	size_t op_size, void *userdata);
-
-static struct fuse_lowlevel_ops niccolum_ops = {
-	.init		= niccolum_init,
-	.lookup		= niccolum_lookup,
-	.forget		= niccolum_forget,
-	.getattr	= niccolum_getattr,
-	.readlink	= niccolum_readlink,
-	.opendir	= niccolum_opendir,
-	.readdir	= niccolum_readdir,
-	.readdirplus	= niccolum_readdirplus,
-	.releasedir	= niccolum_releasedir,
-	.create		= niccolum_create,
-	.open		= niccolum_open,
-	.release	= niccolum_release,
-	.read		= niccolum_read,
-	.write_buf      = niccolum_write_buf
-};
-
-static struct fuse_session *niccolum_session_new(struct fuse_args *args,
-	const struct fuse_lowlevel_ops *op,
-	size_t op_size, void *userdata)
-{
-	(void) op;
-	return fuse_session_new(args, &niccolum_ops, op_size, userdata);
-}
-
-int niccolum_session_loop(struct fuse_session *se);
-int niccolum_session_loop(struct fuse_session *se)
-{
-	niccolum_mt = 0;
-	return fuse_session_loop(se);
-}
-
-int niccolum_session_loop_mt(struct fuse_session *se, int clone_fd);
-int niccolum_session_loop_mt(struct fuse_session *se, int clone_fd)
-{
-	niccolum_mt = 1;
-	return fuse_session_loop_mt(se, clone_fd);
-}
-
-/* END NICCOLUM CODE */
-
 static struct fuse_lowlevel_ops lo_oper = {
 	.init		= lo_init,
 	.lookup		= lo_lookup,
@@ -729,7 +579,7 @@ int main(int argc, char *argv[])
 	if (lo.root.fd == -1)
 		err(1, "open(\"/\", O_PATH)");
 
-	se = niccolum_session_new(&args, &lo_oper, sizeof(lo_oper), &lo);
+	se = fuse_session_new(&args, &lo_oper, sizeof(lo_oper), &lo);
 	if (se == NULL)
 	    goto err_out1;
 
@@ -743,9 +593,9 @@ int main(int argc, char *argv[])
 
 	/* Block until ctrl+c or fusermount -u */
 	if (opts.singlethread)
-		ret = niccolum_session_loop(se);
+		ret = fuse_session_loop(se);
 	else
-		ret = niccolum_session_loop_mt(se, opts.clone_fd);
+		ret = fuse_session_loop_mt(se, opts.clone_fd);
 
 	fuse_session_unmount(se);
 err_out3:

@@ -1822,16 +1822,6 @@ char *fuse_session_statsDir(struct fuse_session *se);
 #endif // OMIT_SBU_FSL_CODE
 
 
-/* Begin Niccolum changes */
-
-/**
- * Set the provider for the given request.
- */
- void fuse_set_provider(fuse_req_t req, int niccolum);
- int fuse_get_provider(fuse_req_t req);
- 
- /* End Niccolum changes */
-
 /**
  * Create a low level session.
  *
@@ -2018,6 +2008,38 @@ void fuse_session_process_buf(struct fuse_session *se,
  * @return the actual size of the raw request, or -errno on error
  */
 int fuse_session_receive_buf(struct fuse_session *se, struct fuse_buf *buf);
+
+/* BEGIN NICCOLUM CODE */
+
+struct fuse_session *niccolum_session_new(struct fuse_args *args,
+	const struct fuse_lowlevel_ops *op,
+	size_t op_size, void *userdata);
+
+#undef fuse_session_loop_mt
+int niccolum_session_loop_mt_31(struct fuse_session *se, int clone_fd);
+#if FUSE_USE_VERSION < 32
+#define fuse_session_loop_mt(se, clone_fd) niccolum_session_loop_mt_31(se, clone_fd)
+#else
+int niccolum_session_loop_mt_32(struct fuse_session *se, struct fuse_loop_config *config);
+#define fuse_session_loop_mt(se, config) niccolum_session_loop_mt_32(se, config)
+#endif
+	
+
+void niccolum_session_destroy(struct fuse_session *se);
+
+
+int niccolum_session_loop(struct fuse_session *se);
+
+/* TODO: map fuse_session_destry.  For now we call explicitly */
+
+/**
+ * Set the provider for the given request.
+ */
+ void niccolum_set_provider(fuse_req_t req, int niccolum);
+ int niccolum_get_provider(fuse_req_t req);
+ 
+
+/* END NICCOLUM CODE */
 
 #ifdef __cplusplus
 }

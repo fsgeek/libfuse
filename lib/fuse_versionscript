@@ -128,8 +128,12 @@ FUSE_3.0 {
 		fuse_apply_conn_info_opts;
 		fuse_parse_conn_info_opts;
 
-		fuse_set_provider;
-		fuse_get_provider;
+		niccolum_set_provider;
+		niccolum_get_provider;
+		niccolum_session_loop_mt_31;
+		niccolum_session_new;
+		niccolum_session_destroy;
+		niccolum_session_loop;
 
 		generate_start_time;
 		generate_end_time;
