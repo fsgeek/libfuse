@@ -29,13 +29,16 @@
  //
  // This is the generic niccolum message
  //
- typedef struct niccolum_message {
-    niccolum_message_type_t MessageType;
+#define NICCOLUM_MESSAGE_MAGIC "NICCOLUM"
+#define NICCOLUM_MESSAGE_MAGIC_SIZE (8)
+
+typedef struct niccolum_message {
+	char MagicNumber[NICCOLUM_MESSAGE_MAGIC_SIZE];
+	niccolum_message_type_t MessageType;
     u_int64_t MessageId;
     u_int32_t MessageLength;
     unsigned char Message[1];
  } niccolum_message_t;
-
 
  //
  // This is the name being requested

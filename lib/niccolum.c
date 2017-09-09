@@ -253,6 +253,7 @@ static void niccolum_mq_event_handler(union sigval sv)
 	struct mq_attr attr;
 	void *message;
 	ssize_t bytes_received;
+	niccolum_message_t *niccolum_message;
 
 	/* how big is could the message be? */
 	if (mq_getattr(se->message_queue_descriptor, &attr) < 0) {
@@ -262,26 +263,52 @@ static void niccolum_mq_event_handler(union sigval sv)
 
 	message = malloc(attr.mq_msgsize);
 
-	if (NULL == message) {
-		fprintf(stderr, "niccolum (fuse): failed to allocate message buffer: %s\n", strerror(errno));
-		return;
+	while (NULL != message) {
+
+		bytes_received = mq_receive(se->message_queue_descriptor, message, attr.mq_msgsize, NULL /* optional priority */ );
+
+		if (bytes_received < 0) {
+			fprintf(stderr, "niccolum (fuse): failed to read message from queue: %s\n", strerror(errno));
+			return;
+		}
+
+		/* now we have a message from the queue and need to process it */
+		niccolum_message = (niccolum_message_t *)message;
+		if (0 != memcmp(NICCOLUM_MESSAGE_MAGIC, niccolum_message->MagicNumber, NICCOLUM_MESSAGE_MAGIC_SIZE)) {
+			/* not a valid message */
+			fprintf(stderr, "niccolum (fuse): invalid message received from queue\n");
+			break;
+		}
+
+		switch (niccolum_message->MessageType) {
+			case NICCOLUM_FUSE_OP_RESPONSE:
+			case NICCOLUM_NAME_MAP_RESPONSE:
+			case NICCOLUM_FUSE_NOTIFY:
+			default: {
+				fprintf(stderr, "niccolum (fuse): invalid message type received %d\n", (int) niccolum_message->MessageType);
+				break;
+			}
+
+			case NICCOLUM_NAME_MAP_REQUEST: {
+				break;
+			}
+
+			case NICCOLUM_FUSE_OP_REQUEST: {
+				break;
+			}
+
+		}
+
 	}
 
-	bytes_received = mq_receive(se->message_queue_descriptor, message, attr.mq_msgsize, NULL /* optional priority */ );
-
-	if (bytes_received < 0) {
-		fprintf(stderr, "niccolum (fuse): failed to read message from queue: %s\n", strerror(errno));
-		return;
+	if (NULL != message) {
+		free(message);
+		message = 0;	
 	}
-
-	/* now we have a message from the queue and need to process it */
-
 
 
 
 	/* done processing it, clean up buffer */
-	free(message);
-	message = 0;
 }
 
 static struct sigevent niccolum_mq_sigevent;
