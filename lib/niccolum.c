@@ -24,6 +24,12 @@
 #include <time.h>
 #include <mqueue.h>
 
+struct niccolum_req {
+	struct fuse_req fuse_request;
+
+	/* niccolum specific routing information */
+
+};
 
 static const struct fuse_lowlevel_ops *niccolum_original_ops;
     
@@ -200,6 +206,82 @@ static struct fuse_lowlevel_ops niccolum_ops = {
     
     return se;
 }
+
+#if 0
+static void                     /* Thread start function */
+tfunc(union sigval sv)
+{
+    struct mq_attr attr;
+    ssize_t nr;
+    void *buf;
+    mqd_t mqdes = *((mqd_t *) sv.sival_ptr);
+
+
+    /* Determine maximum msg size; allocate buffer to receive msg */
+
+
+    if (mq_getattr(mqdes, &attr) == -1) {
+        perror("mq_getattr");
+        exit(EXIT_FAILURE);
+    }
+    buf = malloc(attr.mq_msgsize);
+
+
+    if (buf == NULL) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+
+
+    nr = mq_receive(mqdes, buf, attr.mq_msgsize, NULL);
+    if (nr == -1) {
+        perror("mq_receive");
+        exit(EXIT_FAILURE);
+    }
+
+
+    printf("Read %ld bytes from message queue\n", (long) nr);
+    free(buf);
+    exit(EXIT_SUCCESS);         /* Terminate the process */
+}
+#endif // 0
+
+static void niccolum_mq_event_handler(union sigval sv)
+{
+	struct fuse_session *se = (struct fuse_session *) sv.sival_ptr;
+	struct mq_attr attr;
+	void *message;
+	ssize_t bytes_received;
+
+	/* how big is could the message be? */
+	if (mq_getattr(se->message_queue_descriptor, &attr) < 0) {
+		fprintf(stderr, "niccolum (fuse): failed to get message queue attributes: %s\n", strerror(errno));
+		return;
+	}
+
+	message = malloc(attr.mq_msgsize);
+
+	if (NULL == message) {
+		fprintf(stderr, "niccolum (fuse): failed to allocate message buffer: %s\n", strerror(errno));
+		return;
+	}
+
+	bytes_received = mq_receive(se->message_queue_descriptor, message, attr.mq_msgsize, NULL /* optional priority */ );
+
+	if (bytes_received < 0) {
+		fprintf(stderr, "niccolum (fuse): failed to read message from queue: %s\n", strerror(errno));
+		return;
+	}
+
+	/* now we have a message from the queue and need to process it */
+
+	/* done processing it, clean up buffer */
+	free(message);
+	message = 0;
+}
+
+static struct sigevent niccolum_mq_sigevent;
+static pthread_attr_t niccolum_mq_thread_attr;
  
 int niccolum_session_loop_mt_32(struct fuse_session *se, struct fuse_loop_config *config)
 {
@@ -212,7 +294,40 @@ int niccolum_session_loop_mt_32(struct fuse_session *se, struct fuse_loop_config
     }
 
     /* start niccolum thread */
-    status = 0;
+	status = 0;
+
+	while (se->message_queue_descriptor >= 0) {
+		memset(&niccolum_mq_thread_attr, 0, sizeof(niccolum_mq_thread_attr));
+		status = pthread_attr_init(&niccolum_mq_thread_attr);
+		if (status < 0) {
+			fprintf(stderr, "niccolum (fuse): pthread_attr_init failed: %s\n", strerror(errno));
+			return status; // no cleanup
+		}
+		status = pthread_attr_setdetachstate(&niccolum_mq_thread_attr, PTHREAD_CREATE_DETACHED);
+		if (status < 0) {
+			fprintf(stderr, "niccolum (fuse): pthread_attr_setdetachstate failed: %s\n", strerror(errno));
+			break;
+		}
+		
+		memset(&niccolum_mq_sigevent, 0, sizeof(niccolum_mq_sigevent));
+
+		niccolum_mq_sigevent.sigev_notify = SIGEV_THREAD;
+		niccolum_mq_sigevent.sigev_notify_function = niccolum_mq_event_handler;
+		niccolum_mq_sigevent.sigev_notify_attributes = &niccolum_mq_thread_attr;
+		niccolum_mq_sigevent.sigev_value.sival_ptr = se; /* this is what gets passed in */
+		status = mq_notify(se->message_queue_descriptor, &niccolum_mq_sigevent);
+
+		if (status < 0) {
+			fprintf(stderr, "niccolum (fuse): mq_notify failed: %s\n", strerror(errno));
+			break;
+		}
+	
+	}
+
+	if (status < 0) {
+		pthread_attr_destroy(&niccolum_mq_thread_attr);
+	}
+
     return status;
 }
 
@@ -235,12 +350,11 @@ int niccolum_session_loop_mt_32(struct fuse_session *se, struct fuse_loop_config
  {
      /* TODO: need to add the niccolum specific logic here */
 
-     	/* BEGIN NICCOLUM CODE */
 	if (se->message_queue_descriptor) {
 		(void) mq_close(se->message_queue_descriptor);
 		(void) mq_unlink(se->message_queue_name);
+		pthread_attr_destroy(&niccolum_mq_thread_attr);
 	}
-	/* END NICCOLUM CODE */
 
 
      fuse_session_destroy(se);
