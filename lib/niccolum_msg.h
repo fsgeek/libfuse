@@ -51,7 +51,7 @@
  //
  typedef struct niccolum_name_map_response {
      niccolum_key_t Key;
- } niccolum_name_map_request_t;
+ } niccolum_name_map_response_t;
 
 
  struct niccolum_uuid_t {

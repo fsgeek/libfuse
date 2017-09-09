@@ -11,6 +11,7 @@
 #include "fuse_kernel.h"
 #include "fuse_opt.h"
 #include "fuse_misc.h"
+#include "niccolum_msg.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -275,6 +276,9 @@ static void niccolum_mq_event_handler(union sigval sv)
 
 	/* now we have a message from the queue and need to process it */
 
+
+
+
 	/* done processing it, clean up buffer */
 	free(message);
 	message = 0;
@@ -322,6 +326,8 @@ int niccolum_session_loop_mt_32(struct fuse_session *se, struct fuse_loop_config
 			break;
 		}
 	
+		/* done */
+		break;
 	}
 
 	if (status < 0) {
