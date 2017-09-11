@@ -20,6 +20,7 @@ if libdl.found()
 endif
 
 librt = cc.find_library('rt')
+libuuid = cc.find_library('uuid')
 
 if host_machine.system().startswith('netbsd')
    deps += [ cc.find_library('perfuse'),
@@ -29,7 +30,7 @@ endif
 fusermount_path = join_paths(get_option('prefix'), get_option('bindir'))
 libfuse = library('fuse3', libfuse_sources, version: meson.project_version(),
                   soversion: '3', include_directories: include_dirs,
-                  dependencies: [deps, librt], install: true,
+                  dependencies: [deps, librt, libuuid], install: true,
                   link_depends: 'fuse_versionscript',
                   c_args: [ '-DFUSE_USE_VERSION=32',
                             '-DFUSERMOUNT_DIR="{}"'.format(fusermount_path) ],

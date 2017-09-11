@@ -2015,6 +2015,8 @@ struct fuse_session *niccolum_session_new(struct fuse_args *args,
 	const struct fuse_lowlevel_ops *op,
 	size_t op_size, void *userdata);
 
+#define fuse_session_new(a, o, s, u) niccolum_session_new(a, o, s, u)
+
 #undef fuse_session_loop_mt
 int niccolum_session_loop_mt_31(struct fuse_session *se, int clone_fd);
 #if FUSE_USE_VERSION < 32

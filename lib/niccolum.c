@@ -24,6 +24,7 @@
 #include <sys/file.h>
 #include <time.h>
 #include <mqueue.h>
+#include <uuid/uuid.h>
 
 struct niccolum_req {
 	struct fuse_req fuse_request;
@@ -153,6 +154,8 @@ static struct fuse_lowlevel_ops niccolum_ops = {
 	.write_buf      = niccolum_write_buf
 };
 
+uuid_t niccolum_server_uuid;
+
 /**
  * Set the provider for the given request.
  */
@@ -171,6 +174,8 @@ static struct fuse_lowlevel_ops niccolum_ops = {
      return req->niccolum;
   }
  
+  #undef fuse_session_new
+
   struct fuse_session *niccolum_session_new(struct fuse_args *args,
      const struct fuse_lowlevel_ops *op,
      size_t op_size, void *userdata)
@@ -208,88 +213,83 @@ static struct fuse_lowlevel_ops niccolum_ops = {
     return se;
 }
 
-#if 0
-static void                     /* Thread start function */
-tfunc(union sigval sv)
+static void *niccolum_mq_worker(void* arg)
 {
-    struct mq_attr attr;
-    ssize_t nr;
-    void *buf;
-    mqd_t mqdes = *((mqd_t *) sv.sival_ptr);
-
-
-    /* Determine maximum msg size; allocate buffer to receive msg */
-
-
-    if (mq_getattr(mqdes, &attr) == -1) {
-        perror("mq_getattr");
-        exit(EXIT_FAILURE);
-    }
-    buf = malloc(attr.mq_msgsize);
-
-
-    if (buf == NULL) {
-        perror("malloc");
-        exit(EXIT_FAILURE);
-    }
-
-
-    nr = mq_receive(mqdes, buf, attr.mq_msgsize, NULL);
-    if (nr == -1) {
-        perror("mq_receive");
-        exit(EXIT_FAILURE);
-    }
-
-
-    printf("Read %ld bytes from message queue\n", (long) nr);
-    free(buf);
-    exit(EXIT_SUCCESS);         /* Terminate the process */
-}
-#endif // 0
-
-static void niccolum_mq_event_handler(union sigval sv)
-{
-	struct fuse_session *se = (struct fuse_session *) sv.sival_ptr;
+	struct fuse_session *se = (struct fuse_session *) arg;
 	struct mq_attr attr;
-	void *message;
-	ssize_t bytes_received;
-	niccolum_message_t *niccolum_message;
+	ssize_t bytes_received, bytes_to_send;
+	niccolum_message_t *niccolum_request, *niccolum_response;
 
-	/* how big is could the message be? */
-	if (mq_getattr(se->message_queue_descriptor, &attr) < 0) {
-		fprintf(stderr, "niccolum (fuse): failed to get message queue attributes: %s\n", strerror(errno));
-		return;
+	if (NULL == se) {
+		pthread_exit(NULL);
 	}
 
-	message = malloc(attr.mq_msgsize);
+	if (mq_getattr(se->message_queue_descriptor, &attr) < 0) {
+		fprintf(stderr, "niccolum (fuse): failed to get message queue attributes: %s\n", strerror(errno));
+		return NULL;
+	}
 
-	while (NULL != message) {
+	niccolum_response = malloc(attr.mq_msgsize);
+	if (NULL == niccolum_response) {
+		fprintf(stderr, "niccolum (fuse): failed to allocate response buffer: %s\n", strerror(errno));
+		return NULL;
+	}
 
-		bytes_received = mq_receive(se->message_queue_descriptor, message, attr.mq_msgsize, NULL /* optional priority */ );
+	niccolum_request = malloc(attr.mq_msgsize);
 
+	while (NULL != niccolum_request) {
+
+		bytes_to_send = 0;
+
+		bytes_received = mq_receive(se->message_queue_descriptor, (char *)niccolum_request, attr.mq_msgsize, NULL /* optional priority */ );
+		
 		if (bytes_received < 0) {
 			fprintf(stderr, "niccolum (fuse): failed to read message from queue: %s\n", strerror(errno));
-			return;
+			return NULL;
 		}
 
 		/* now we have a message from the queue and need to process it */
-		niccolum_message = (niccolum_message_t *)message;
-		if (0 != memcmp(NICCOLUM_MESSAGE_MAGIC, niccolum_message->MagicNumber, NICCOLUM_MESSAGE_MAGIC_SIZE)) {
+		if (0 != memcmp(NICCOLUM_MESSAGE_MAGIC, niccolum_request->MagicNumber, NICCOLUM_MESSAGE_MAGIC_SIZE)) {
 			/* not a valid message */
 			fprintf(stderr, "niccolum (fuse): invalid message received from queue\n");
 			break;
 		}
 
-		switch (niccolum_message->MessageType) {
+		fprintf(stderr, "niccolum (fuse): received message\n");
+
+		/* handle the request */
+		switch (niccolum_request->MessageType) {
+			default: {
+				fprintf(stderr, "niccolum (fuse): invalid message type received %d\n", (int) niccolum_request->MessageType);
+				break;
+			}
+
 			case NICCOLUM_FUSE_OP_RESPONSE:
 			case NICCOLUM_NAME_MAP_RESPONSE:
-			case NICCOLUM_FUSE_NOTIFY:
-			default: {
-				fprintf(stderr, "niccolum (fuse): invalid message type received %d\n", (int) niccolum_message->MessageType);
+			case NICCOLUM_FUSE_NOTIFY: {
+				fprintf(stderr, "niccolum (fuse): not implemented type received %d\n", (int) niccolum_request->MessageType);
 				break;
 			}
 
 			case NICCOLUM_NAME_MAP_REQUEST: {
+				/* first, is the request here a match for this file system? */
+				if (0 != strcmp(niccolum_request->Message, se->mountpoint)) {
+					/* this is not ours */
+					memcpy(niccolum_response->MagicNumber, NICCOLUM_MESSAGE_MAGIC, NICCOLUM_MESSAGE_MAGIC_SIZE);
+					memcpy(&niccolum_response->SenderUuid, niccolum_server_uuid, sizeof(uuid_t));
+					niccolum_response->MessageType = NICCOLUM_NAME_MAP_RESPONSE;
+					niccolum_response->MessageId = niccolum_request->MessageId;
+					niccolum_response->MessageLength = sizeof(niccolum_name_map_response_t);
+					((niccolum_name_map_response_t  *)niccolum_response->Message)->Status = NICCOLUM_MAP_RESPONSE_INVALID;
+				}
+				else {
+					/* so let's do a lookup */
+					/* map the name given */
+					fprintf(stderr, "niccolum (fuse): map name request for %s\n", niccolum_request->Message);
+					fprintf(stderr, "niccolum (fuse): mount point is %s (len = %zu)\n", se->mountpoint, strlen(se->mountpoint));
+					fprintf(stderr, "niccolum (fuse): do lookup on %s\n", &niccolum_request->Message[strlen(se->mountpoint) + 1]);
+					
+				}
 				break;
 			}
 
@@ -298,33 +298,29 @@ static void niccolum_mq_event_handler(union sigval sv)
 			}
 
 		}
+		
+		
+		if (0 < bytes_to_send) {
+			fprintf(stderr, "niccolum (fuse): sending response %zu\n", bytes_to_send);
+		}
+	
+	}	
+	return NULL;
 
-	}
-
-	if (NULL != message) {
-		free(message);
-		message = 0;	
-	}
-
-
-
-	/* done processing it, clean up buffer */
 }
 
-static struct sigevent niccolum_mq_sigevent;
+// static struct sigevent niccolum_mq_sigevent;
 static pthread_attr_t niccolum_mq_thread_attr;
+#define NICCOLUM_MAX_THREADS (1)
+pthread_t niccolum_threads[NICCOLUM_MAX_THREADS];
+#undef fuse_session_loop_mt
  
 int niccolum_session_loop_mt_32(struct fuse_session *se, struct fuse_loop_config *config)
 {
     int status;
 
     niccolum_mt = 1;
-    status = fuse_session_loop_mt(se, config);
-    if (0 != status) {
-        return status;
-    }
 
-    /* start niccolum thread */
 	status = 0;
 
 	while (se->message_queue_descriptor >= 0) {
@@ -339,18 +335,15 @@ int niccolum_session_loop_mt_32(struct fuse_session *se, struct fuse_loop_config
 			fprintf(stderr, "niccolum (fuse): pthread_attr_setdetachstate failed: %s\n", strerror(errno));
 			break;
 		}
-		
-		memset(&niccolum_mq_sigevent, 0, sizeof(niccolum_mq_sigevent));
 
-		niccolum_mq_sigevent.sigev_notify = SIGEV_THREAD;
-		niccolum_mq_sigevent.sigev_notify_function = niccolum_mq_event_handler;
-		niccolum_mq_sigevent.sigev_notify_attributes = &niccolum_mq_thread_attr;
-		niccolum_mq_sigevent.sigev_value.sival_ptr = se; /* this is what gets passed in */
-		status = mq_notify(se->message_queue_descriptor, &niccolum_mq_sigevent);
+		uuid_generate_time_safe(niccolum_server_uuid);
 
-		if (status < 0) {
-			fprintf(stderr, "niccolum (fuse): mq_notify failed: %s\n", strerror(errno));
-			break;
+		/* TODO: start worker thread(s) */
+		for (unsigned int index = 0; index < NICCOLUM_MAX_THREADS; index++) {
+			status = pthread_create(&niccolum_threads[index], &niccolum_mq_thread_attr, niccolum_mq_worker, se);
+			if (status < 0) {
+				fprintf(stderr, "niccolum (fuse): pthread_create failed: %s\n", strerror(errno));
+			}
 		}
 	
 		/* done */
@@ -359,9 +352,11 @@ int niccolum_session_loop_mt_32(struct fuse_session *se, struct fuse_loop_config
 
 	if (status < 0) {
 		pthread_attr_destroy(&niccolum_mq_thread_attr);
+		return status;
 	}
 
-    return status;
+	return fuse_session_loop_mt(se, config);
+
 }
 
  int niccolum_session_loop_mt_31(struct fuse_session *se, int clone_fd)

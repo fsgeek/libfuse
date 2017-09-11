@@ -2827,6 +2827,8 @@ restart:
 /* room needed in buffer to accommodate header */
 #define HEADER_SIZE 0x1000
 
+#undef fuse_session_new
+
 struct fuse_session *fuse_session_new(struct fuse_args *args,
 				      const struct fuse_lowlevel_ops *op,
 				      size_t op_size, void *userdata)
