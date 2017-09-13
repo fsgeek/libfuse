@@ -26,12 +26,157 @@
 #include <mqueue.h>
 #include <uuid/uuid.h>
 
+typedef struct niccolum_client_mq_map {
+	struct niccolum_client_mq_map *next;
+	struct niccolum_client_mq_map *prev;
+	uuid_t uuid;
+	mqd_t mq_descriptor;
+} niccolum_client_mq_map_t;
+
+/* protect the client lookup info */
+pthread_rwlock_t niccolum_client_mq_map_lock = PTHREAD_RWLOCK_INITIALIZER;
+niccolum_client_mq_map_t *niccolum_client_mq_map_list;
+
+static mqd_t niccolum_lookup_mq_for_client_locked(uuid_t clientUuid) 
+{
+	niccolum_client_mq_map_t *map;
+	mqd_t mq_descriptor = -ENOENT;
+
+	if (NULL == niccolum_client_mq_map_list) {
+		return -ENOENT;
+	}
+
+	map = niccolum_client_mq_map_list;
+	do {
+		if (0 == uuid_compare(clientUuid, map->uuid)) {
+			/* we found it */
+			mq_descriptor = map->mq_descriptor;
+			break;
+		}
+		map = map->next;
+	}
+	while (map != niccolum_client_mq_map_list);
+
+	return mq_descriptor;
+
+}
+
+static mqd_t niccolum_lookup_mq_for_client(uuid_t clientUuid)
+{
+	mqd_t mq_descriptor = -ENOENT;
+
+	if (NULL == niccolum_client_mq_map_list) {
+		return -ENOENT;
+	}
+
+	pthread_rwlock_rdlock(&niccolum_client_mq_map_lock);
+	mq_descriptor = niccolum_lookup_mq_for_client_locked(clientUuid);
+	pthread_rwlock_unlock(&niccolum_client_mq_map_lock);
+
+	return mq_descriptor;
+}
+
+static int niccolum_insert_mq_for_client(uuid_t clientUuid, mqd_t mq_descriptor)
+{
+	niccolum_client_mq_map_t *map = malloc(sizeof(niccolum_client_mq_map_t));
+	int status = 0;
+
+	if (NULL == map) {
+		return -ENOMEM;
+	}
+
+	map->next = map;
+	map->prev = map;
+	uuid_copy(map->uuid, clientUuid);
+	map->mq_descriptor = mq_descriptor;
+
+	pthread_rwlock_wrlock(&niccolum_client_mq_map_lock);
+
+	if (NULL == niccolum_client_mq_map_list) {
+		niccolum_client_mq_map_list = map;
+	}
+
+	while (niccolum_client_mq_map_list != map) {
+		if (niccolum_lookup_mq_for_client(clientUuid) >= 0) {
+			/* already exists! */
+			status = -EEXIST;
+			break;
+		}
+
+		map->next = niccolum_client_mq_map_list;
+		map->prev = niccolum_client_mq_map_list->prev;
+		niccolum_client_mq_map_list->prev = map;
+		map->prev->next = map;
+		break;
+	}
+	pthread_rwlock_unlock(&niccolum_client_mq_map_lock);
+
+	return status;
+}
+
+/* TODO: add remove! */
+
 struct niccolum_req {
 	struct fuse_req fuse_request;
 
 	/* niccolum specific routing information */
 
 };
+
+static void list_init_req(struct fuse_req *req)
+{
+	req->next = req;
+	req->prev = req;
+}
+
+static void list_del_req(struct fuse_req *req)
+{
+	struct fuse_req *prev = req->prev;
+	struct fuse_req *next = req->next;
+	prev->next = next;
+	next->prev = prev;
+}
+
+
+static struct fuse_req *niccolum_alloc_req(struct fuse_session *se)
+{
+	struct fuse_req *req;
+
+	req = (struct fuse_req *) calloc(1, sizeof(struct fuse_req));
+	if (req == NULL) {
+		fprintf(stderr, "niccolum (fuse): failed to allocate request\n");
+	} else {
+		req->se = se;
+		req->ctr = 1;
+		list_init_req(req);
+		fuse_mutex_init(&req->lock);
+		niccolum_set_provider(req, 1);
+	}
+	return req;
+}
+
+static void destroy_req(fuse_req_t req)
+{
+	pthread_mutex_destroy(&req->lock);
+	free(req);
+}
+
+static void niccolum_free_req(fuse_req_t req)
+{
+	int ctr;
+	struct fuse_session *se = req->se;
+
+	pthread_mutex_lock(&se->lock);
+	req->u.ni.func = NULL;
+	req->u.ni.data = NULL;
+	list_del_req(req);
+	ctr = --req->ctr;
+	fuse_chan_put(req->ch);
+	req->ch = NULL;
+	pthread_mutex_unlock(&se->lock);
+	if (!ctr)
+		destroy_req(req);
+}
 
 static const struct fuse_lowlevel_ops *niccolum_original_ops;
     
@@ -213,12 +358,46 @@ uuid_t niccolum_server_uuid;
     return se;
 }
 
+static int niccolum_connect_to_client(uuid_t clientUuid)
+{
+	char name[64];
+
+	/* TODO parameterize this name */
+	strncpy(name, "/niccolum_", sizeof(name));
+	uuid_unparse_lower(clientUuid, &name[strlen(name)]);
+	return mq_open(name, O_WRONLY);
+
+}
+
+static int niccolum_send_response(uuid_t clientUuid, niccolum_message_t *response)
+{
+	mqd_t mq_descriptor = niccolum_lookup_mq_for_client(clientUuid);
+
+	if (mq_descriptor == ENOENT) {
+		/* create it */	
+		mq_descriptor = niccolum_connect_to_client(clientUuid);
+
+		if (mq_descriptor >= 0) {
+			niccolum_insert_mq_for_client(clientUuid, mq_descriptor);
+		}
+	}
+
+	if (mq_descriptor < 0) {
+		return mq_descriptor;
+	}
+
+	(void) response;
+
+	return EINVAL;
+}
+
 static void *niccolum_mq_worker(void* arg)
 {
 	struct fuse_session *se = (struct fuse_session *) arg;
 	struct mq_attr attr;
 	ssize_t bytes_received, bytes_to_send;
 	niccolum_message_t *niccolum_request, *niccolum_response;
+	struct fuse_req *req;
 
 	if (NULL == se) {
 		pthread_exit(NULL);
@@ -273,7 +452,10 @@ static void *niccolum_mq_worker(void* arg)
 
 			case NICCOLUM_NAME_MAP_REQUEST: {
 				/* first, is the request here a match for this file system? */
-				if (0 != strcmp(niccolum_request->Message, se->mountpoint)) {
+				size_t message_length = strlen(niccolum_request->Message);
+				size_t mp_length = strlen(se->mountpoint);
+
+				if ((message_length > message_length) && strncmp(niccolum_request->Message, se->mountpoint, mp_length)) {
 					/* this is not ours */
 					memcpy(niccolum_response->MagicNumber, NICCOLUM_MESSAGE_MAGIC, NICCOLUM_MESSAGE_MAGIC_SIZE);
 					memcpy(&niccolum_response->SenderUuid, niccolum_server_uuid, sizeof(uuid_t));
@@ -281,15 +463,20 @@ static void *niccolum_mq_worker(void* arg)
 					niccolum_response->MessageId = niccolum_request->MessageId;
 					niccolum_response->MessageLength = sizeof(niccolum_name_map_response_t);
 					((niccolum_name_map_response_t  *)niccolum_response->Message)->Status = NICCOLUM_MAP_RESPONSE_INVALID;
+					bytes_to_send = sizeof(niccolum_name_map_response_t);
+					break;
 				}
-				else {
-					/* so let's do a lookup */
-					/* map the name given */
-					fprintf(stderr, "niccolum (fuse): map name request for %s\n", niccolum_request->Message);
-					fprintf(stderr, "niccolum (fuse): mount point is %s (len = %zu)\n", se->mountpoint, strlen(se->mountpoint));
-					fprintf(stderr, "niccolum (fuse): do lookup on %s\n", &niccolum_request->Message[strlen(se->mountpoint) + 1]);
-					
+
+				/* so let's do a lookup */
+				/* map the name given */
+				fprintf(stderr, "niccolum (fuse): map name request for %s\n", niccolum_request->Message);
+				fprintf(stderr, "niccolum (fuse): mount point is %s (len = %zu)\n", se->mountpoint, strlen(se->mountpoint));
+				fprintf(stderr, "niccolum (fuse): do lookup on %s\n", &niccolum_request->Message[strlen(se->mountpoint) + 1]);
+				req = niccolum_alloc_req(se);
+				if (NULL == req) {
+					break;
 				}
+				niccolum_original_ops->lookup(req, FUSE_ROOT_ID, &niccolum_request->Message[mp_length+1]);
 				break;
 			}
 
@@ -301,12 +488,39 @@ static void *niccolum_mq_worker(void* arg)
 		
 		
 		if (0 < bytes_to_send) {
+			uuid_t uuid;
 			fprintf(stderr, "niccolum (fuse): sending response %zu\n", bytes_to_send);
+			memcpy(&uuid, &niccolum_request->SenderUuid, sizeof(uuid_t));
+			niccolum_send_response(uuid, niccolum_response);
 		}
 	
 	}	
 	return NULL;
 
+}
+
+int niccolum_send_reply_iov(fuse_req_t req, int error, struct iovec *iov, int count);
+int niccolum_send_reply_iov(fuse_req_t req, int error, struct iovec *iov, int count)
+{
+	struct fuse_out_header out;
+
+	(void) count;
+
+	if (error <= -1000 || error > 0) {
+		fprintf(stderr, "fuse: bad error value: %i\n",	error);
+		error = -ERANGE;
+	}
+
+	out.unique = req->unique;
+	out.error = error;
+
+	iov[0].iov_base = &out;
+	iov[0].iov_len = sizeof(struct fuse_out_header);
+
+	/* return fuse_send_msg(req->se, req->ch, iov, count); */
+
+	niccolum_free_req(req);
+	return 0;
 }
 
 // static struct sigevent niccolum_mq_sigevent;

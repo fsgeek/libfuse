@@ -262,6 +262,12 @@ static int send_reply_iov(fuse_req_t req, int error, struct iovec *iov,
 {
 	int res;
 
+	if (req->niccolum) {
+		extern int niccolum_reply_iov(fuse_req_t req, int error, struct iovec *iov,
+			int count);
+    	res = niccolum_send_reply_iov(req, error, iov, count);
+		return res;
+	}
 	res = fuse_send_reply_iov_nofree(req, error, iov, count);
 	fuse_free_req(req);
 	return res;
@@ -277,6 +283,7 @@ static int send_reply(fuse_req_t req, int error, const void *arg,
 		iov[1].iov_len = argsize;
 		count++;
 	}
+
 	return send_reply_iov(req, error, iov, count);
 }
 
