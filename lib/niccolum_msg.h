@@ -11,6 +11,9 @@
 // we need to know what kind of message is being sent.
 //
 typedef enum {
+	NICCOLUM_TEST = 42, // a random test value
+	NICCOLUM_TEST_RESPONSE,
+	
     NICCOLUM_NAME_MAP_REQUEST = 61, // map the name to a usable identifier
     NICCOLUM_NAME_MAP_RESPONSE, // respond to the name map request
     NICCOLUM_FUSE_OP_REQUEST,   // FUSE request
@@ -35,6 +38,10 @@ struct niccolum_uuid_t {
 typedef struct niccolum_uuid_t niccolum_uuid_t;
 
 
+typedef struct {
+	u_int8_t MessageLength;
+	u_char Message[1];
+} niccolum_test_message_t;
 
 //
 // This is the generic niccolum message

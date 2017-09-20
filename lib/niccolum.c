@@ -97,7 +97,7 @@ static int niccolum_insert_mq_for_client(uuid_t clientUuid, mqd_t mq_descriptor)
 	}
 
 	while (niccolum_client_mq_map_list != map) {
-		if (niccolum_lookup_mq_for_client(clientUuid) >= 0) {
+	if (niccolum_lookup_mq_for_client_locked(clientUuid) >= 0) {
 			/* already exists! */
 			status = -EEXIST;
 			break;
@@ -105,8 +105,9 @@ static int niccolum_insert_mq_for_client(uuid_t clientUuid, mqd_t mq_descriptor)
 
 		map->next = niccolum_client_mq_map_list;
 		map->prev = niccolum_client_mq_map_list->prev;
+		niccolum_client_mq_map_list->prev->next = map;
 		niccolum_client_mq_map_list->prev = map;
-		map->prev->next = map;
+		niccolum_client_mq_map_list = map;
 		break;
 	}
 	pthread_rwlock_unlock(&niccolum_client_mq_map_lock);
@@ -373,7 +374,7 @@ static int niccolum_send_response(uuid_t clientUuid, niccolum_message_t *respons
 {
 	mqd_t mq_descriptor = niccolum_lookup_mq_for_client(clientUuid);
 
-	if (mq_descriptor == ENOENT) {
+	if (mq_descriptor == -ENOENT) {
 		/* create it */	
 		mq_descriptor = niccolum_connect_to_client(clientUuid);
 
@@ -386,9 +387,8 @@ static int niccolum_send_response(uuid_t clientUuid, niccolum_message_t *respons
 		return mq_descriptor;
 	}
 
-	(void) response;
+	return mq_send(mq_descriptor, (char *)response, offsetof(niccolum_message_t, Message) + response->MessageLength, 0);
 
-	return EINVAL;
 }
 
 static void *niccolum_mq_worker(void* arg)
@@ -463,7 +463,7 @@ static void *niccolum_mq_worker(void* arg)
 					niccolum_response->MessageId = niccolum_request->MessageId;
 					niccolum_response->MessageLength = sizeof(niccolum_name_map_response_t);
 					((niccolum_name_map_response_t  *)niccolum_response->Message)->Status = NICCOLUM_MAP_RESPONSE_INVALID;
-					bytes_to_send = sizeof(niccolum_name_map_response_t);
+					bytes_to_send = offsetof(niccolum_message_t, Message) + sizeof(niccolum_name_map_response_t);
 					break;
 				}
 
@@ -484,6 +484,30 @@ static void *niccolum_mq_worker(void* arg)
 				break;
 			}
 
+			case NICCOLUM_TEST: {
+				niccolum_test_message_t *test_message = (niccolum_test_message_t *)niccolum_request->Message;
+				ssize_t response_length = offsetof(niccolum_message_t, Message) + test_message->MessageLength;
+
+				memcpy(niccolum_response->MagicNumber, NICCOLUM_MESSAGE_MAGIC, NICCOLUM_MESSAGE_MAGIC_SIZE);
+				memcpy(&niccolum_response->SenderUuid, niccolum_server_uuid, sizeof(uuid_t));			
+				niccolum_response->MessageType = NICCOLUM_TEST_RESPONSE;
+				niccolum_response->MessageId = niccolum_response->MessageId;
+
+				if (response_length < niccolum_request->MessageLength) {
+					// we received a runt request
+					niccolum_response->MessageLength = 0;
+					bytes_to_send = sizeof(niccolum_message_t);
+					break;
+				}
+
+				/* send response */
+				niccolum_response->MessageLength = offsetof(niccolum_message_t, Message) + test_message->MessageLength;
+				memcpy(niccolum_response->Message, test_message, response_length);
+				bytes_to_send = offsetof(niccolum_message_t, Message) + response_length;
+				
+				break;
+			}
+
 		}
 		
 		
@@ -494,7 +518,13 @@ static void *niccolum_mq_worker(void* arg)
 			niccolum_send_response(uuid, niccolum_response);
 		}
 	
-	}	
+	}
+
+	if (NULL != niccolum_response) {
+		free(niccolum_response);
+		niccolum_response = NULL;
+	}
+
 	return NULL;
 
 }
