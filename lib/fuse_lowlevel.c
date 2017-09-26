@@ -16,6 +16,7 @@
 #include "fuse_kernel.h"
 #include "fuse_opt.h"
 #include "fuse_misc.h"
+#include "niccolum_fuse.h"
 
 #include <stdio.h>
 #include <stdlib.h>

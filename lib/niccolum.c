@@ -12,6 +12,7 @@
 #include "fuse_opt.h"
 #include "fuse_misc.h"
 #include "niccolum_msg.h"
+#include "niccolum_fuse.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -348,7 +349,7 @@ uuid_t niccolum_server_uuid;
     //
     // Create it if it does not exist.  Permissive permissions
     //
-	se->message_queue_descriptor = mq_open(se->message_queue_name, O_RDONLY | O_CREAT, 0666, NULL);
+	se->message_queue_descriptor = mq_open(se->message_queue_name, O_RDONLY | O_CREAT, 0422, NULL);
 
     if (se->message_queue_descriptor < 0) {
 		fprintf(stderr, "fuse (niccolum): failed to create message queue: %s\n", strerror(errno));
@@ -491,7 +492,7 @@ static void *niccolum_mq_worker(void* arg)
 				memcpy(niccolum_response->MagicNumber, NICCOLUM_MESSAGE_MAGIC, NICCOLUM_MESSAGE_MAGIC_SIZE);
 				memcpy(&niccolum_response->SenderUuid, niccolum_server_uuid, sizeof(uuid_t));			
 				niccolum_response->MessageType = NICCOLUM_TEST_RESPONSE;
-				niccolum_response->MessageId = niccolum_response->MessageId;
+				niccolum_response->MessageId = niccolum_request->MessageId;
 
 				if (response_length < niccolum_request->MessageLength) {
 					// we received a runt request
@@ -529,7 +530,6 @@ static void *niccolum_mq_worker(void* arg)
 
 }
 
-int niccolum_send_reply_iov(fuse_req_t req, int error, struct iovec *iov, int count);
 int niccolum_send_reply_iov(fuse_req_t req, int error, struct iovec *iov, int count)
 {
 	struct fuse_out_header out;
