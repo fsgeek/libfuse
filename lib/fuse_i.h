@@ -8,6 +8,7 @@
 
 #include "fuse.h"
 #include "fuse_lowlevel.h"
+#include <uuid/uuid.h>
 
 struct mount_opts;
 
@@ -36,6 +37,10 @@ struct fuse_req {
 			fuse_interrupt_func_t func;
 			void *data;
 		} ni;
+		struct {
+			uuid_t recipient; 
+			void *response; 
+		} nic;
 	} u;
 	struct fuse_req *next;
 	struct fuse_req *prev;

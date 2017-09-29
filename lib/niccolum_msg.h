@@ -63,8 +63,8 @@ typedef struct niccolum_message {
 // This is the name being requested
 //
 typedef struct niccolum_name_map_request {
-    u_int16_t NameLength;
-    unsigned char Name[1];
+	u_int16_t NameLength;
+	unsigned char Name[1];
  } niccolum_name_map_request_t;
 
 
@@ -74,6 +74,8 @@ typedef struct niccolum_name_map_request {
 typedef struct niccolum_name_map_response {
 	u_int32_t Status;
 	niccolum_key_t Key;
+	u_int8_t EntryLength;
+	unsigned char Entry[1];
 } niccolum_name_map_response_t;
 
 #define NICCOLUM_MAP_RESPONSE_SUCCESS 0
