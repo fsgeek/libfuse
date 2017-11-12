@@ -7,7 +7,7 @@
 #include "config.h"
 #endif
 
-#include "lookup-table.h"
+#include "niccolum-lookup.h"
 
 #include <string.h>
 #include <pthread.h>
