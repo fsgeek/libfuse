@@ -1,26 +1,34 @@
 /*
- * Copyright (c) 2017 
+ * Copyright (c) 2017 Tony Mason
  * All rights reserved.
  */
 
-#if !defined(__LOOKUP_TABLE_H__)
-#define __LOOKUP_TABLE_H__ (1)
+#if !defined(__NICCOLUM_LOOKUP_H__)
+#define __NICCOLUM_LOOKUP_H__ (1)
 
+#define _FILE_OFFSET_BITS (64)
+#include <fuse/fuse_lowlevel.h>
 #include <uuid/uuid.h>
 #include <stdint.h>
 
-typedef struct lookup_table *lookup_table_t;
-typedef uint32_t (*lookup_table_hash_t)(uuid_t Uuid);
 
-lookup_table_t lookup_table_create(unsigned int SizeHint, const char *Name, lookup_table_hash_t Hash);
-void lookup_table_destroy(lookup_table_t Table);
+//
+// Niccolum must be able to look up by inode number and UUID (the two sources of handles)
+//
+typedef struct _niccolum_object {
+    fuse_ino_t inode;
+    uuid_t uuid;
+    // TODO: we may need additional data here
+} niccolum_object_t;
 
-int lookup_table_insert(lookup_table_t Table, uuid_t Uuid, void *Object);
-int lookup_table_lookup(lookup_table_t Table, uuid_t Uuid, void **Object);
-int lookup_table_remove(lookup_table_t Table, uuid_t Uuid);
+niccolum_object_t *niccolum_object_lookup_by_ino(fuse_ino_t inode);
+niccolum_object_t *niccolum_object_lookup_by_uuid(uuid_t *uuid);
+void niccolum_object_release(niccolum_object_t *object);
+niccolum_object_t *niccolum_object_create(fuse_ino_t inode, uuid_t *uuid);
 
 
-#endif // __LOOKUP_TABLE_H__
+
+#endif // __NICCOLUM_LOOKUP_H__
 
 
 /*

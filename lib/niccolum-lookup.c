@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 
+ * Copyright (c) 2017 Tony Mason
  * All rights reserved.
  */
 
@@ -11,18 +11,11 @@
 
 #include <string.h>
 #include <pthread.h>
-// #include <crt/nstime.h>
-// #include <crt/logging.h>
-// #include <crt/list.h>
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
 
-struct list {
-    struct list *forward;
-    struct list *back;
-};
-
+#include "niccolum-list.h" 
 
 #if !defined(offset_of)
 #define offset_of(type, field) (unsigned long)&(((type *)0)->field)
@@ -32,236 +25,160 @@ struct list {
 #define container_of(ptr, type, member) ((type *)(((char *)ptr) - offset_of(type, member)))
 #endif // container_of
 
-#define list_is_empty(list) ((list)->forward == (list)->back)
-#define list_head(list) ((list)->forward)
-#define list_remove(item) do { \
-    (item)->back->forward = (item)->forward; \
-    (item)->forward->back = (item)->back; \
-    (item)->forward = (item)->back = NULL; } while (0)
+//
+// The current implementation is a simple linked list.  If this isn't sufficiently efficient,
+// the interface is general and it can be moved to a more efficient structure.
+//
+// A reader/writer lock is used to protect.  The read lock is used to protect against insertion/deletion
+// and the write lock is used to allow insertion/deletion.
+//
+// Each object has a reference count; when the reference count goes to zero, it can be removed from
+// the list IFF the list lock is held exclusive.
+//
+static pthread_rwlock_t table_lock = PTHREAD_RWLOCK_INITIALIZER;
+list_entry_t table_list = {.next = &table_list, .prev = &table_list};
 
-#define list_for_each(_list, _itr)                                      \
-    for ((_itr) = list_head((_list));                                   \
-         (_itr) != (_list);                                             \
-         (_itr) = (_itr)->forward)
+typedef struct _niccolum_internal_object {
+    list_entry_t        list_entry;
+    uint32_t            refcount;
+    niccolum_object_t   object;
+} niccolum_internal_object_t;
 
-#if 0
-#define list_insert_tail(list, item) do { \
-    (item)->forward = (list); \
-    (item)->back = (list)->back; \
-    (list)->back->forward = (item); \
-    (list)->back = (item); \
-} while (0)
-#else
-static void list_insert_tail(struct list *list, struct list *item);
-static void list_insert_tail(struct list *list, struct list *item) {
-    item->forward = list;
-    item->back = list->back;
-    list->back->forward = item;
-    list->back = item;
+
+static niccolum_internal_object_t *lookup_by_ino_locked(fuse_ino_t inode)
+{
+    niccolum_internal_object_t *internal_object;
+    list_entry_t *entry;
+    int found = 0;
+
+    list_for_each(&table_list, entry) {
+        internal_object = container_of(entry, niccolum_internal_object_t, list_entry);
+        if (internal_object->object.inode == inode) {
+            found = 1;
+            __atomic_fetch_add(&internal_object->refcount, 1, __ATOMIC_RELAXED);
+            break;
+        }
+    }
+
+    return found ? internal_object : NULL;
 }
-#endif // 0
+
+static niccolum_internal_object_t *lookup_by_uuid_locked(uuid_t *uuid)
+{
+    niccolum_internal_object_t *internal_object;
+    list_entry_t *entry;
+    int found = 0;
+
+    list_for_each(&table_list, entry) {
+        internal_object = container_of(entry, niccolum_internal_object_t, list_entry);
+        if (0 == memcmp(&internal_object->object.uuid, uuid, sizeof(uuid_t))) {
+            found = 1;
+            __atomic_fetch_add(&internal_object->refcount, 1, __ATOMIC_RELAXED);
+            break;
+        }
+    }
+
+    return found ? internal_object : NULL;
+
+}
+
+static void release(niccolum_internal_object_t *object) 
+{
+    //
+    // this is the only place I try to be tricky
+    // To delete, the refcount must do the 1->0 transition
+    // but since most transitions will be to > 0 I don't want to take the lock
+    // exclusive.  So I hold the lock shared (preventing deletion) and decrement 
+    // and see if this might be a deletion call.  If it _might_ be then I have to
+    // bump the refcount and try again with the exclusive lock held.  If it
+    //  *still* drops to zero, I can safely remove and delete the object as nobody
+    // else can find it.
+    //
+    // Lookup: hold lock shared, atomic increment
+    // Release: hold lock shared, atomic decrement IFF decrement causes deletion, atomic increment
+    //          THEN hold lock exclusive, atomic decrement IFF decrement causes deletion, remove and free.
+    //
+    //
+    assert(object->list_entry.next != &object->list_entry);
+    pthread_rwlock_rdlock(&table_lock);
+    if (1 == __atomic_fetch_sub(&object->refcount, 1, __ATOMIC_RELAXED)) {
+        // this is an actual delete, so we need the lock exclusive
+        __atomic_fetch_add(&object->refcount, 1, __ATOMIC_RELAXED);
+        pthread_rwlock_unlock(&table_lock);
+        pthread_rwlock_wrlock(&table_lock);
+        if (1 == __atomic_fetch_sub(&object->refcount, 1, __ATOMIC_RELAXED)) {
+            // now it's safe to remove it
+            remove_list_entry(&object->list_entry);
+            free(object);
+        }
+    }
+    pthread_rwlock_unlock(&table_lock);
+}
+
+
+
+static niccolum_internal_object_t *object_create(fuse_ino_t inode, uuid_t *uuid)
+{
+    niccolum_internal_object_t *internal_object = (niccolum_internal_object_t  *)malloc(sizeof(niccolum_internal_object_t));
+    niccolum_internal_object_t *dummy = NULL;
+
+    while (NULL != internal_object) {
+        initialize_list_entry(&internal_object->list_entry);
+        memcpy(internal_object->object.uuid, uuid, sizeof(uuid_t));
+        internal_object->object.inode = inode;
+        internal_object->refcount = 1;
         
-struct lookup_table {
-    unsigned char EntryCountShift;
-    unsigned char Name[7];
-    pthread_rwlock_t TableLock;
-    lookup_table_hash_t Hash;
-    struct list TableBuckets[1];
-};
-
-typedef struct lookup_table_entry {
-    struct list ListEntry;
-    uuid_t       Uuid;
-    void       *Object;
-} lookup_table_entry_t, *plookup_table_entry_t;
-
-static lookup_table_entry_t *lookup_table_entry_create(uuid_t Uuid, void *Object)
-{
-    lookup_table_entry_t *new_entry = malloc(sizeof(lookup_table_entry_t));
-
-    while (NULL != new_entry) {
-        memcpy(&new_entry->Uuid, Uuid, sizeof(uuid_t));
-        new_entry->Object = Object;
-        break;
-    }
-
-    return new_entry;
-}
-
-static void lookup_table_entry_destroy(lookup_table_entry_t *DeadEntry)
-{
-    free(DeadEntry);
-}
-
-static uint32_t default_hash(uuid_t Uuid)
-{
-    uint32_t hash = ~0;
-    const char *blob = (const char *)Uuid;
-
-    for (unsigned char index = 0; index < sizeof(uuid_t); index += sizeof(uint32_t)) {
-        hash ^= *(const uint32_t *)&blob[index];
-    }
-
-    return hash;
-}
-
-static uint32_t lookup_table_hash(lookup_table_t Table, uuid_t Uuid)
-{
-    return (Table->Hash(Uuid) & ((1<<Table->EntryCountShift)-1));
-}
-
-lookup_table_t
-lookup_table_create(unsigned int SizeHint, const char *Name, lookup_table_hash_t Hash)
-{
-    lookup_table_t table = malloc(sizeof(struct lookup_table));
-    unsigned char entry_count_shift = 0;
-    unsigned entrycount;
-
-    if (SizeHint > 65536) {
-        SizeHint = 65536;
-    }
-
-    while (((unsigned int)(1<<entry_count_shift)) < SizeHint) {
-        entry_count_shift++;
-    }
-
-    entrycount = 1 << entry_count_shift;
-
-    table = malloc(offset_of(struct lookup_table, TableBuckets) + (sizeof(struct list) * entrycount));
-
-    while (NULL != table) {
-        table->EntryCountShift = entry_count_shift;
-        memcpy(table->Name, Name, 7);
-        table->Hash = Hash ? Hash : default_hash;
-        pthread_rwlock_init(&table->TableLock, NULL);
-
-        for (unsigned index = 0; index < entrycount; index++) {
-            table->TableBuckets[index].back = table->TableBuckets[index].forward = &table->TableBuckets[index];
-        }
-        break;
-    }
-
-    return table;
-}
-
-void lookup_table_destroy(lookup_table_t Table)
-{
-    unsigned bucket_index = 0;
-    lookup_table_entry_t *table_entry;
-
-    pthread_rwlock_wrlock(&Table->TableLock);
-
-    for (bucket_index = 0; bucket_index < (unsigned) (1<<Table->EntryCountShift); bucket_index++) {
-        while (!list_is_empty(&Table->TableBuckets[bucket_index])) {
-            table_entry = container_of(list_head(&Table->TableBuckets[bucket_index]), struct lookup_table_entry, ListEntry);
-            list_remove(&table_entry->ListEntry);
-            lookup_table_entry_destroy(table_entry);
-        }
-    }
-
-    pthread_rwlock_unlock(&Table->TableLock);
-
-    free(Table);
-
-    return;
-}
-
-
-static struct lookup_table_entry *lookup_table_locked(const lookup_table_t Table, uuid_t Uuid)
-{
-    uint32_t bucket_index = lookup_table_hash(Table, Uuid);
-    struct lookup_table_entry *table_entry = NULL;
-    struct list *le;
-
-    list_for_each(&Table->TableBuckets[bucket_index], le) {
-        table_entry = container_of(le, struct lookup_table_entry, ListEntry);
-        if (0 == uuid_compare(Uuid, table_entry->Uuid)) {
-            return table_entry;
-        }
-    }
-
-    return NULL;
-
-}
-
-int
-lookup_table_insert(lookup_table_t Table, uuid_t Uuid, void *Object)
-{
-    lookup_table_entry_t *entry = lookup_table_entry_create(Uuid, Object);
-    int status = ENOMEM;
-    uint32_t bucket_index = lookup_table_hash(Table, Uuid);
-    struct lookup_table_entry *table_entry = NULL;
-
-    while (NULL != entry) {
-        memcpy(&entry->Uuid, Uuid, sizeof(uuid_t));
-        entry->Object = Object;
-
-        pthread_rwlock_wrlock(&Table->TableLock);
-        table_entry = lookup_table_locked(Table, Uuid);
-
-        if (table_entry) {
-            status = EEXIST;
+        pthread_rwlock_wrlock(&table_lock);
+        dummy = lookup_by_ino_locked(inode);
+        // assert(NULL == dummy); // shouldn't be one
+        if (NULL == dummy) {
+            insert_list_head(&table_list, &internal_object->list_entry);
+            pthread_rwlock_unlock(&table_lock);
         }
         else {
-            list_insert_tail(&Table->TableBuckets[bucket_index], &entry->ListEntry);
-            status = 0;
+            pthread_rwlock_unlock(&table_lock);
+            free(internal_object);
+            internal_object = dummy;
+            dummy = NULL;
         }
-        pthread_rwlock_unlock(&Table->TableLock);
-
         break;
     }
-
-    if (0 != status) {
-        if (NULL != entry) {
-            free(entry);
-            entry = NULL;
-        }
-    }
-
-    return status;
+    return internal_object;
 }
 
-int
-lookup_table_lookup(lookup_table_t Table, uuid_t Uuid, void **Object)
+niccolum_object_t *niccolum_object_create(fuse_ino_t inode, uuid_t *uuid)
 {
-    struct lookup_table_entry *entry;
+    niccolum_internal_object_t *internal_object = object_create(inode, uuid);
 
-    pthread_rwlock_rdlock(&Table->TableLock);
-    entry = lookup_table_locked(Table, Uuid);
-    pthread_rwlock_unlock(&Table->TableLock);
-
-    if (entry) {
-        *Object = entry->Object;
-    }
-    else {
-        *Object = NULL;
-    }
-
-    return NULL == entry ? ENODATA : 0;
+    return internal_object ? &internal_object->object : NULL;
 }
 
-int lookup_table_remove(lookup_table_t Table, uuid_t Uuid)
+niccolum_object_t *niccolum_object_lookup_by_ino(fuse_ino_t inode)
 {
-    struct lookup_table_entry *entry;
-    int status = ENODATA;
+    niccolum_internal_object_t *internal_object;
 
-    pthread_rwlock_wrlock(&Table->TableLock);
-    entry = lookup_table_locked(Table, Uuid);
-
-    if (entry) {
-        list_remove(&entry->ListEntry);
-    }
-    pthread_rwlock_unlock(&Table->TableLock);
-
-    if (entry) {
-        lookup_table_entry_destroy(entry);
-        status = 0;
-    }
-
-    return status;
-
+    pthread_rwlock_rdlock(&table_lock);
+    internal_object = lookup_by_ino_locked(inode);
+    pthread_rwlock_unlock(&table_lock);
+    return internal_object ? &internal_object->object : NULL;
 }
 
+niccolum_object_t *niccolum_object_lookup_by_uuid(uuid_t *uuid)
+{
+    niccolum_internal_object_t *internal_object;
+
+    pthread_rwlock_rdlock(&table_lock);
+    internal_object = lookup_by_uuid_locked(uuid);
+    pthread_rwlock_unlock(&table_lock);
+    return internal_object ? &internal_object->object : NULL;
+}
+
+void niccolum_object_release(niccolum_object_t *object)
+{
+    niccolum_internal_object_t *internal_object = container_of(object, niccolum_internal_object_t, object);
+
+    release(internal_object);
+}
 
 
 /*
