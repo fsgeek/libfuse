@@ -11,8 +11,10 @@
 #include "fuse_kernel.h"
 #include "fuse_opt.h"
 #include "fuse_misc.h"
+#include <fuse_lowlevel.h>
 #include "niccolum_msg.h"
 #include "niccolum_fuse.h"
+#include "niccolum-lookup.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -330,16 +332,16 @@ uuid_t niccolum_server_uuid;
      (void) op;
      struct fuse_session *se;
      
+     //
+     // Save the original ops
+     //
+     niccolum_original_ops = op;
+
      se = fuse_session_new(args, &niccolum_ops, op_size, userdata);
 
      if (NULL == se) {
          return se;
      }
-
-     //
-     // Save the original ops
-     //
-     niccolum_original_ops = op;
 
      //
      // For now I'm hard coding these names.  They should be parameterizied
@@ -349,7 +351,7 @@ uuid_t niccolum_server_uuid;
     //
     // Create it if it does not exist.  Permissive permissions
     //
-	se->message_queue_descriptor = mq_open(se->message_queue_name, O_RDONLY | O_CREAT, 0422, NULL);
+	se->message_queue_descriptor = mq_open(se->message_queue_name, O_RDONLY | O_CREAT, 0622, NULL);
 
     if (se->message_queue_descriptor < 0) {
 		fprintf(stderr, "fuse (niccolum): failed to create message queue: %s\n", strerror(errno));
@@ -464,20 +466,25 @@ static void *niccolum_mq_worker(void* arg)
 					niccolum_response->MessageId = niccolum_request->MessageId;
 					niccolum_response->MessageLength = sizeof(niccolum_name_map_response_t);
 					((niccolum_name_map_response_t  *)niccolum_response->Message)->Status = NICCOLUM_MAP_RESPONSE_INVALID;
-					bytes_to_send = offsetof(niccolum_message_t, Message) + sizeof(niccolum_name_map_response_t);
+					// bytes_to_send = offsetof(niccolum_message_t, Message) + sizeof(niccolum_name_map_response_t);
+					bytes_to_send = 0;
 					break;
 				}
 
 				/* so let's do a lookup */
 				/* map the name given */
 				fprintf(stderr, "niccolum (fuse): map name request for %s\n", niccolum_request->Message);
-				fprintf(stderr, "niccolum (fuse): mount point is %s (len = %zu)\n", se->mountpoint, strlen(se->mountpoint));
-				fprintf(stderr, "niccolum (fuse): do lookup on %s\n", &niccolum_request->Message[strlen(se->mountpoint) + 1]);
+				fprintf(stderr, "niccolum (fuse): mount point is %s (len = %zu)\n", se->mountpoint, mp_length);
+				fprintf(stderr, "niccolum (fuse): do lookup on %s\n", &niccolum_request->Message[mp_length]);
 				req = niccolum_alloc_req(se);
 				if (NULL == req) {
 					break;
 				}
+				req->niccolum_req = niccolum_request;
+				req->niccolum_rsp = niccolum_response;
+				niccolum_response = NULL; /* again, passing it to the lookup, consume it in the completion handler */
 				niccolum_original_ops->lookup(req, FUSE_ROOT_ID, &niccolum_request->Message[mp_length+1]);
+				niccolum_request = NULL; /* passing it to the lookup */
 				break;
 			}
 
@@ -510,7 +517,17 @@ static void *niccolum_mq_worker(void* arg)
 			}
 
 		}
+
+		if (NULL == niccolum_request) {
+			/* need a new one - must have consumed it */
+			niccolum_request = (niccolum_message_t *) malloc(attr.mq_msgsize);	
+		}
 		
+		if (NULL == niccolum_response) {
+			niccolum_response = (niccolum_message_t *) malloc(attr.mq_msgsize);
+			assert(0 == bytes_to_send);
+			bytes_to_send = 0;
+		}
 		
 		if (0 < bytes_to_send) {
 			uuid_t uuid;
@@ -533,6 +550,9 @@ static void *niccolum_mq_worker(void* arg)
 int niccolum_send_reply_iov(fuse_req_t req, int error, struct iovec *iov, int count)
 {
 	struct fuse_out_header out;
+	niccolum_message_t *niccolum_request = req->niccolum_req;
+	niccolum_message_t *niccolum_response = req->niccolum_rsp;
+	size_t bytes_to_send = 0;
 
 	(void) count;
 
@@ -548,6 +568,76 @@ int niccolum_send_reply_iov(fuse_req_t req, int error, struct iovec *iov, int co
 	iov[0].iov_len = sizeof(struct fuse_out_header);
 
 	/* return fuse_send_msg(req->se, req->ch, iov, count); */
+
+	switch (niccolum_request->MessageType) {
+		default:
+		assert(0); 
+		break;
+
+		case NICCOLUM_NAME_MAP_REQUEST: {
+			niccolum_name_map_response_t *nmr;
+
+			assert(NULL != niccolum_request);
+			assert(NULL != niccolum_response);
+
+			/* let's set up the response here */
+			memcpy(niccolum_response->MagicNumber, NICCOLUM_MESSAGE_MAGIC, NICCOLUM_MESSAGE_MAGIC_SIZE);
+			memcpy(&niccolum_response->SenderUuid, niccolum_server_uuid, sizeof(uuid_t));
+			niccolum_response->MessageType = NICCOLUM_NAME_MAP_RESPONSE;
+			niccolum_response->MessageId = niccolum_request->MessageId;
+			niccolum_response->MessageLength = sizeof(niccolum_name_map_response_t);
+			((niccolum_name_map_response_t  *)niccolum_response->Message)->Status = NICCOLUM_MAP_RESPONSE_INVALID;
+
+			nmr = (niccolum_name_map_response_t *)niccolum_response->Message;
+
+			while (0 == error) {
+				struct fuse_entry_out *arg = (struct fuse_entry_out *)iov[1].iov_base;
+				niccolum_object_t *nobj;
+
+				nobj = niccolum_object_create((ino_t) arg->nodeid, NULL);
+
+				if (NULL == nobj) {
+					error = ENOMEM;
+					break;
+				}
+
+				nmr->Status = NICCOLUM_MAP_RESPONSE_SUCCESS;
+				nmr->Key.KeyLength = sizeof(uuid_t);
+				memcpy(nmr->Key.Key, &nobj->uuid, sizeof(uuid_t));
+				niccolum_response->MessageLength = offsetof(niccolum_name_map_response_t, Key.Key) + nmr->Key.KeyLength;
+				break;
+			}
+
+			if (0 != error) {
+				nmr->Status = NICCOLUM_MAP_RESPONSE_INVALID;
+				nmr->Key.KeyLength = 0;
+			}
+
+			bytes_to_send = offsetof(niccolum_message_t, Message);
+			bytes_to_send += niccolum_response->MessageLength;
+
+		}
+		break;
+
+	}
+
+	if (0 < bytes_to_send) {
+		uuid_t uuid;
+		fprintf(stderr, "niccolum (fuse): sending response %zu (%d @ %s)\n", bytes_to_send, __LINE__, __FILE__);
+		memcpy(&uuid, &niccolum_request->SenderUuid, sizeof(uuid_t));
+		niccolum_send_response(uuid, niccolum_response);
+	}
+
+
+	if (NULL != req->niccolum_req) {
+		free(req->niccolum_req);
+		req->niccolum_req = NULL;
+	}
+
+	if (NULL != req->niccolum_rsp) {
+		free(req->niccolum_rsp);
+		req->niccolum_rsp = NULL;
+	}
 
 	niccolum_free_req(req);
 	return 0;

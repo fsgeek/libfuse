@@ -7,7 +7,8 @@
 #define __NICCOLUM_LOOKUP_H__ (1)
 
 #define _FILE_OFFSET_BITS (64)
-#include <fuse/fuse_lowlevel.h>
+
+#include <fuse_lowlevel.h>
 #include <uuid/uuid.h>
 #include <stdint.h>
 

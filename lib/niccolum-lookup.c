@@ -7,13 +7,14 @@
 #include "config.h"
 #endif
 
-#include "niccolum-lookup.h"
 
 #include <string.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <fuse_lowlevel.h>
+#include "niccolum-lookup.h"
 
 #include "niccolum-list.h" 
 
@@ -148,6 +149,13 @@ static niccolum_internal_object_t *object_create(fuse_ino_t inode, uuid_t *uuid)
 
 niccolum_object_t *niccolum_object_create(fuse_ino_t inode, uuid_t *uuid)
 {
+    uuid_t dummy_uuid;
+
+    if (NULL == uuid) {
+        uuid_generate(dummy_uuid);
+        uuid = &dummy_uuid;
+    }
+
     niccolum_internal_object_t *internal_object = object_create(inode, uuid);
 
     return internal_object ? &internal_object->object : NULL;
