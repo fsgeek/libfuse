@@ -36,7 +36,11 @@
 // Each object has a reference count; when the reference count goes to zero, it can be removed from
 // the list IFF the list lock is held exclusive.
 //
-static pthread_rwlock_t table_lock = PTHREAD_RWLOCK_INITIALIZER;
+
+static void lock_table_for_lookup(void);
+static void lock_table_for_change(void);
+static void unlock_table(void);
+
 list_entry_t table_list = {.next = &table_list, .prev = &table_list};
 
 typedef struct _niccolum_internal_object {
@@ -101,21 +105,20 @@ static void release(niccolum_internal_object_t *object)
     //
     //
     assert(object->list_entry.next != &object->list_entry);
-    pthread_rwlock_rdlock(&table_lock);
+    lock_table_for_lookup();
     if (1 == __atomic_fetch_sub(&object->refcount, 1, __ATOMIC_RELAXED)) {
         // this is an actual delete, so we need the lock exclusive
         __atomic_fetch_add(&object->refcount, 1, __ATOMIC_RELAXED);
-        pthread_rwlock_unlock(&table_lock);
-        pthread_rwlock_wrlock(&table_lock);
+        unlock_table();
+        lock_table_for_change();
         if (1 == __atomic_fetch_sub(&object->refcount, 1, __ATOMIC_RELAXED)) {
             // now it's safe to remove it
             remove_list_entry(&object->list_entry);
             free(object);
         }
     }
-    pthread_rwlock_unlock(&table_lock);
+    unlock_table();
 }
-
 
 
 static niccolum_internal_object_t *object_create(fuse_ino_t inode, uuid_t *uuid)
@@ -127,23 +130,24 @@ static niccolum_internal_object_t *object_create(fuse_ino_t inode, uuid_t *uuid)
         initialize_list_entry(&internal_object->list_entry);
         memcpy(internal_object->object.uuid, uuid, sizeof(uuid_t));
         internal_object->object.inode = inode;
-        internal_object->refcount = 1;
-        
-        pthread_rwlock_wrlock(&table_lock);
+        internal_object->refcount = 2;
+
+        lock_table_for_change();
         dummy = lookup_by_ino_locked(inode);
         // assert(NULL == dummy); // shouldn't be one
         if (NULL == dummy) {
             insert_list_head(&table_list, &internal_object->list_entry);
-            pthread_rwlock_unlock(&table_lock);
+            unlock_table();
         }
         else {
-            pthread_rwlock_unlock(&table_lock);
+            unlock_table();
             free(internal_object);
             internal_object = dummy;
             dummy = NULL;
         }
         break;
     }
+    assert(NULL == dummy);
     return internal_object;
 }
 
@@ -165,9 +169,9 @@ niccolum_object_t *niccolum_object_lookup_by_ino(fuse_ino_t inode)
 {
     niccolum_internal_object_t *internal_object;
 
-    pthread_rwlock_rdlock(&table_lock);
+    lock_table_for_lookup();
     internal_object = lookup_by_ino_locked(inode);
-    pthread_rwlock_unlock(&table_lock);
+    unlock_table();
     return internal_object ? &internal_object->object : NULL;
 }
 
@@ -175,9 +179,9 @@ niccolum_object_t *niccolum_object_lookup_by_uuid(uuid_t *uuid)
 {
     niccolum_internal_object_t *internal_object;
 
-    pthread_rwlock_rdlock(&table_lock);
+    lock_table_for_lookup();
     internal_object = lookup_by_uuid_locked(uuid);
-    pthread_rwlock_unlock(&table_lock);
+    unlock_table();
     return internal_object ? &internal_object->object : NULL;
 }
 
@@ -186,6 +190,23 @@ void niccolum_object_release(niccolum_object_t *object)
     niccolum_internal_object_t *internal_object = container_of(object, niccolum_internal_object_t, object);
 
     release(internal_object);
+}
+
+static pthread_rwlock_t table_lock = PTHREAD_RWLOCK_INITIALIZER;
+
+static void lock_table_for_lookup(void)
+{
+    pthread_rwlock_rdlock(&table_lock);
+}
+
+static void lock_table_for_change(void)
+{
+    pthread_rwlock_wrlock(&table_lock);
+}
+
+static void unlock_table(void)
+{
+    pthread_rwlock_unlock(&table_lock);
 }
 
 

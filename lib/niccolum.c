@@ -196,6 +196,7 @@ static void niccolum_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 static void niccolum_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
 	niccolum_set_provider(req, 0);
+	req->niccolum_notify = 1;
 	/* TODO: add to lookup table? */
 	return niccolum_original_ops->lookup(req, parent, name);
 }
@@ -204,6 +205,7 @@ static void niccolum_forget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup);
 static void niccolum_forget(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup)
 {
 	niccolum_set_provider(req, 0);
+	req->niccolum_notify = 1;
 	/* TODO: remove from lookup table? */
 	return niccolum_original_ops->forget(req, ino, nlookup);
 }
@@ -226,6 +228,7 @@ static void niccolum_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_in
 static void niccolum_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 {
 	niccolum_set_provider(req, 0);
+	req->niccolum_notify = 1;
 	return niccolum_original_ops->opendir(req, ino, fi);
 }
 
@@ -261,6 +264,7 @@ static void niccolum_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_in
 static void niccolum_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 {
 	niccolum_set_provider(req, 0);
+	req->niccolum_notify = 1;
 	return niccolum_original_ops->release(req, ino, fi);
 }
 
@@ -268,6 +272,7 @@ static void niccolum_releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file
 static void niccolum_releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 {
 	niccolum_set_provider(req, 0);
+	req->niccolum_notify = 1;
 	return niccolum_original_ops->releasedir(req, ino, fi);
 }
 
@@ -322,7 +327,8 @@ uuid_t niccolum_server_uuid;
   {
      return req->niccolum;
   }
- 
+
+
   #undef fuse_session_new
 
   struct fuse_session *niccolum_session_new(struct fuse_args *args,
@@ -488,6 +494,11 @@ static void *niccolum_mq_worker(void* arg)
 				break;
 			}
 
+			case NICCOLUM_DIR_MAP_REQUEST: {
+
+				break;
+			}
+
 			case NICCOLUM_FUSE_OP_REQUEST: {
 				break;
 			}
@@ -547,6 +558,102 @@ static void *niccolum_mq_worker(void* arg)
 
 }
 
+#if 0
+	FUSE_LOOKUP	   = 1,
+	FUSE_FORGET	   = 2,  /* no reply */
+	FUSE_GETATTR	   = 3,
+	FUSE_SETATTR	   = 4,
+	FUSE_READLINK	   = 5,
+	FUSE_SYMLINK	   = 6,
+	FUSE_MKNOD	   = 8,
+	FUSE_MKDIR	   = 9,
+	FUSE_UNLINK	   = 10,
+	FUSE_RMDIR	   = 11,
+	FUSE_RENAME	   = 12,
+	FUSE_LINK	   = 13,
+	FUSE_OPEN	   = 14,
+	FUSE_READ	   = 15,
+	FUSE_WRITE	   = 16,
+	FUSE_STATFS	   = 17,
+	FUSE_RELEASE       = 18,
+	FUSE_FSYNC         = 20,
+	FUSE_SETXATTR      = 21,
+	FUSE_GETXATTR      = 22,
+	FUSE_LISTXATTR     = 23,
+	FUSE_REMOVEXATTR   = 24,
+	FUSE_FLUSH         = 25,
+	FUSE_INIT          = 26,
+	FUSE_OPENDIR       = 27,
+	FUSE_READDIR       = 28,
+	FUSE_RELEASEDIR    = 29,
+	FUSE_FSYNCDIR      = 30,
+	FUSE_GETLK         = 31,
+	FUSE_SETLK         = 32,
+	FUSE_SETLKW        = 33,
+	FUSE_ACCESS        = 34,
+	FUSE_CREATE        = 35,
+	FUSE_INTERRUPT     = 36,
+	FUSE_BMAP          = 37,
+	FUSE_DESTROY       = 38,
+	FUSE_IOCTL         = 39,
+	FUSE_POLL          = 40,
+	FUSE_NOTIFY_REPLY  = 41,
+	FUSE_BATCH_FORGET  = 42,
+	FUSE_FALLOCATE     = 43,
+	FUSE_READDIRPLUS   = 44,
+	FUSE_RENAME2       = 45,
+	FUSE_LSEEK         = 46,
+
+#endif // 0
+
+void niccolum_notify_reply_iov(fuse_req_t req, int error, struct iovec *iov, int count)
+{
+	if (0 != error) {
+		// So far we don't care about the error outcomes
+		return;
+	}
+
+	if (count < 2) {
+		// not sure what this means
+		return;
+	}
+
+	//
+	// We want to process some requests here
+	//
+	switch(req->opcode) {
+		default:
+			// no action is the default
+			break;
+		case FUSE_LOOKUP: {
+			ino_t ino;
+			struct fuse_entry_out *arg = (struct fuse_entry_out *)iov[1].iov_base;
+			niccolum_object_t *nicobj;
+
+			assert(iov[1].iov_len >= sizeof(struct fuse_entry_out));
+			ino = arg->nodeid;
+			// TODO: figure out how to insert this
+			nicobj = niccolum_object_create(ino, NULL);
+			assert(NULL != nicobj);
+			niccolum_object_release(nicobj);
+			break;
+		}
+		case FUSE_RELEASE: {
+			// TODO
+			break;
+		}
+		case FUSE_OPENDIR: {
+			// TODO
+			break;
+		}
+		case FUSE_RELEASEDIR: {
+			// TODO
+			break;
+		}
+	}
+	return;
+}
+
 int niccolum_send_reply_iov(fuse_req_t req, int error, struct iovec *iov, int count)
 {
 	struct fuse_out_header out;
@@ -571,6 +678,7 @@ int niccolum_send_reply_iov(fuse_req_t req, int error, struct iovec *iov, int co
 
 	switch (niccolum_request->MessageType) {
 		default:
+		// don't know what is being asked here, so abort
 		assert(0); 
 		break;
 
@@ -605,6 +713,7 @@ int niccolum_send_reply_iov(fuse_req_t req, int error, struct iovec *iov, int co
 				nmr->Key.KeyLength = sizeof(uuid_t);
 				memcpy(nmr->Key.Key, &nobj->uuid, sizeof(uuid_t));
 				niccolum_response->MessageLength = offsetof(niccolum_name_map_response_t, Key.Key) + nmr->Key.KeyLength;
+				niccolum_object_release(nobj);
 				break;
 			}
 
