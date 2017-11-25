@@ -27,11 +27,7 @@ struct fuse_req {
 	int interrupted;
 	unsigned int ioctl_64bit : 1;
 	/* BEGIN NICCOLUM CHANGE */
-	unsigned int niccolum : 1; // niccolum allocated
-	unsigned int niccolum_notify : 1; // notify niccolum
-	void *niccolum_req;
-	void *niccolum_rsp;
-	struct fuse_req *original_fuse_req;
+	unsigned int niccolum : 1;
 	/* END NICCOLUM CHANGE */	
 	union {
 		struct {
