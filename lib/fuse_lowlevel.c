@@ -255,14 +255,6 @@ int fuse_send_reply_iov_nofree(fuse_req_t req, int error, struct iovec *iov,
 	iov[0].iov_base = &out;
 	iov[0].iov_len = sizeof(struct fuse_out_header);
 
-	if (req->niccolum) {
-		assert(0 == req->niccolum_notify); // can't be both
-    	return niccolum_send_reply_iov(req, error, iov, count);
-	}
-	if (req->niccolum_notify) {
-		niccolum_notify_reply_iov(req, error, iov, count);
-	}
-
 	return fuse_send_msg(req->se, req->ch, iov, count);
 }
 
@@ -271,6 +263,12 @@ static int send_reply_iov(fuse_req_t req, int error, struct iovec *iov,
 {
 	int res;
 
+	if (req->niccolum) {
+		extern int niccolum_reply_iov(fuse_req_t req, int error, struct iovec *iov,
+			int count);
+    	res = niccolum_send_reply_iov(req, error, iov, count);
+		return res;
+	}
 	res = fuse_send_reply_iov_nofree(req, error, iov, count);
 	fuse_free_req(req);
 	return res;

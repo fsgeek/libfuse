@@ -349,7 +349,7 @@ uuid_t niccolum_server_uuid;
     //
     // Create it if it does not exist.  Permissive permissions
     //
-	se->message_queue_descriptor = mq_open(se->message_queue_name, O_RDONLY | O_CREAT, 0422, NULL);
+	se->message_queue_descriptor = mq_open(se->message_queue_name, O_RDONLY | O_CREAT, 0622, NULL);
 
     if (se->message_queue_descriptor < 0) {
 		fprintf(stderr, "fuse (niccolum): failed to create message queue: %s\n", strerror(errno));
@@ -409,23 +409,26 @@ static void *niccolum_mq_worker(void* arg)
 		return NULL;
 	}
 
-	niccolum_response = malloc(attr.mq_msgsize);
-	if (NULL == niccolum_response) {
-		fprintf(stderr, "niccolum (fuse): failed to allocate response buffer: %s\n", strerror(errno));
-		return NULL;
-	}
 
 	niccolum_request = malloc(attr.mq_msgsize);
 
 	while (NULL != niccolum_request) {
 
+		if (NULL == niccolum_response) {
+			niccolum_response = malloc(attr.mq_msgsize);
+			if (NULL == niccolum_response) {
+				fprintf(stderr, "niccolum (fuse): failed to allocate response buffer: %s\n", strerror(errno));
+				break;
+			}
+		}
+	
 		bytes_to_send = 0;
 
 		bytes_received = mq_receive(se->message_queue_descriptor, (char *)niccolum_request, attr.mq_msgsize, NULL /* optional priority */ );
 		
 		if (bytes_received < 0) {
 			fprintf(stderr, "niccolum (fuse): failed to read message from queue: %s\n", strerror(errno));
-			return NULL;
+			break;
 		}
 
 		/* now we have a message from the queue and need to process it */
@@ -477,7 +480,12 @@ static void *niccolum_mq_worker(void* arg)
 				if (NULL == req) {
 					break;
 				}
+				req->unique = niccolum_request->MessageId;
+				memcpy(&req->u.nic.recipient, &niccolum_request->SenderUuid, sizeof(uuid_t));	
+				req->u.nic.response = niccolum_response;
 				niccolum_original_ops->lookup(req, FUSE_ROOT_ID, &niccolum_request->Message[mp_length+1]);
+				bytes_to_send = 0;
+				niccolum_response = NULL;
 				break;
 			}
 
@@ -512,18 +520,15 @@ static void *niccolum_mq_worker(void* arg)
 		}
 		
 		
-		if (0 < bytes_to_send) {
+		if (bytes_to_send > 0) {
 			uuid_t uuid;
+			assert(NULL != niccolum_response); // don't tell me to send something and then give me NULL
 			fprintf(stderr, "niccolum (fuse): sending response %zu\n", bytes_to_send);
 			memcpy(&uuid, &niccolum_request->SenderUuid, sizeof(uuid_t));
 			niccolum_send_response(uuid, niccolum_response);
+
 		}
 	
-	}
-
-	if (NULL != niccolum_response) {
-		free(niccolum_response);
-		niccolum_response = NULL;
 	}
 
 	return NULL;
@@ -532,24 +537,54 @@ static void *niccolum_mq_worker(void* arg)
 
 int niccolum_send_reply_iov(fuse_req_t req, int error, struct iovec *iov, int count)
 {
-	struct fuse_out_header out;
-
+	niccolum_message_t *niccolum_response;
+	size_t bytes_to_send = 0;
+	
 	(void) count;
+	(void) iov;
 
 	if (error <= -1000 || error > 0) {
 		fprintf(stderr, "fuse: bad error value: %i\n",	error);
 		error = -ERANGE;
 	}
 
-	out.unique = req->unique;
-	out.error = error;
+	niccolum_response = (niccolum_message_t *)req->u.nic.response;
 
-	iov[0].iov_base = &out;
-	iov[0].iov_len = sizeof(struct fuse_out_header);
+	switch(niccolum_response->MessageType) {
+		default: {
+			fprintf(stderr, "niccolum (fuse): invalid message type %d\n", niccolum_response->MessageType);
+			break;
+		}
 
-	/* return fuse_send_msg(req->se, req->ch, iov, count); */
+		case NICCOLUM_TEST:
+		case NICCOLUM_TEST_RESPONSE:
+		case NICCOLUM_NAME_MAP_REQUEST:
+		case NICCOLUM_FUSE_OP_REQUEST: {
+			fprintf(stderr, "niccolum (fuse): incorrect message type %d (logic bug)\n", niccolum_response->MessageType);
+			assert(0); // this is a logic bug
+		}
 
-	niccolum_free_req(req);
+		case NICCOLUM_NAME_MAP_RESPONSE: {
+			niccolum_name_map_response_t *nm_response = (niccolum_name_map_response_t *) niccolum_response->Message;
+
+			nm_response->Status = error;
+			// Need to generate a key at this point
+			// nm_response->Key; // TBD: set this
+			break;
+		}
+		case NICCOLUM_FUSE_OP_RESPONSE: {
+			break;
+		}
+	
+	}
+	
+	if (bytes_to_send > 0) {
+		niccolum_send_response(req->u.nic.recipient, niccolum_response);
+	}
+
+	if (NULL != req) {
+		niccolum_free_req(req);
+	}
 	return 0;
 }
 
