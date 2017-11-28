@@ -8,7 +8,6 @@
 
 #include "fuse.h"
 #include "fuse_lowlevel.h"
-#include <uuid/uuid.h>
 
 struct mount_opts;
 
@@ -27,7 +26,11 @@ struct fuse_req {
 	int interrupted;
 	unsigned int ioctl_64bit : 1;
 	/* BEGIN NICCOLUM CHANGE */
-	unsigned int niccolum : 1;
+	unsigned int niccolum : 1; // niccolum allocated
+	unsigned int niccolum_notify : 1; // notify niccolum
+	void *niccolum_req;
+	void *niccolum_rsp;
+	struct fuse_req *original_fuse_req;
 	/* END NICCOLUM CHANGE */	
 	union {
 		struct {
@@ -37,10 +40,6 @@ struct fuse_req {
 			fuse_interrupt_func_t func;
 			void *data;
 		} ni;
-		struct {
-			uuid_t recipient; 
-			void *response; 
-		} nic;
 	} u;
 	struct fuse_req *next;
 	struct fuse_req *prev;

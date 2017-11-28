@@ -16,8 +16,13 @@ typedef enum {
 	
     NICCOLUM_NAME_MAP_REQUEST = 61, // map the name to a usable identifier
     NICCOLUM_NAME_MAP_RESPONSE, // respond to the name map request
-    NICCOLUM_FUSE_OP_REQUEST,   // FUSE request
-	NICCOLUM_FUSE_OP_RESPONSE,  // FUSE response
+	NICCOLUM_MAP_RELEASE_REQUEST, // release a name map (handle)
+	NICCOLUM_MAP_RELEASE_RESPONSE, // respond to the release request
+	NICCOLUM_DIR_MAP_REQUEST, // request a mapping of the directory contents
+	NICCOLUM_DIR_MAP_RESPONSE, // response to dir map request
+	// Everything beyond this is TODO
+    NICCOLUM_FUSE_OP_REQUEST,
+	NICCOLUM_FUSE_OP_RESPONSE,
 	NICCOLUM_FUSE_NOTIFY, // FUSE notify
 } niccolum_message_type_t;
 
@@ -63,8 +68,8 @@ typedef struct niccolum_message {
 // This is the name being requested
 //
 typedef struct niccolum_name_map_request {
-	u_int16_t NameLength;
-	unsigned char Name[1];
+    u_int16_t NameLength;
+    unsigned char Name[1];
  } niccolum_name_map_request_t;
 
 
@@ -74,8 +79,6 @@ typedef struct niccolum_name_map_request {
 typedef struct niccolum_name_map_response {
 	u_int32_t Status;
 	niccolum_key_t Key;
-	u_int8_t EntryLength;
-	unsigned char Entry[1];
 } niccolum_name_map_response_t;
 
 #define NICCOLUM_MAP_RESPONSE_SUCCESS 0
@@ -83,6 +86,17 @@ typedef struct niccolum_name_map_response {
 #define NICCOLUM_MAP_RESPONSE_INVALID 22
 
 typedef niccolum_uuid_t niccolum_buf_t;
+
+//
+// Directory map logic
+//
+typedef struct niccolum_dir_map_request {
+	niccolum_key_t Key;
+} niccolum_dir_map_reqeust_t;
+
+typedef struct niccolum_dir_map_response {
+	niccolum_uuid_t MapUuid;
+} niccolum_dir_map_response_t;
 
 #if 0
 struct fuse_buf {
