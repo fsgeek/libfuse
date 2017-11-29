@@ -15,6 +15,7 @@
 #include "niccolum_msg.h"
 #include "niccolum_fuse.h"
 #include "niccolum-lookup.h"
+#include "niccolum-list.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,15 @@
 #include <mqueue.h>
 #include <uuid/uuid.h>
 
+
+#if !defined(offset_of)
+#define offset_of(type, field) (unsigned long)&(((type *)0)->field)
+#endif // offset_of
+
+#if !defined(container_of)
+#define container_of(ptr, type, member) ((type *)(((char *)ptr) - offset_of(type, member)))
+#endif // container_of
+
 typedef struct niccolum_client_mq_map {
 	struct niccolum_client_mq_map *next;
 	struct niccolum_client_mq_map *prev;
@@ -39,6 +49,7 @@ typedef struct niccolum_client_mq_map {
 /* protect the client lookup info */
 pthread_rwlock_t niccolum_client_mq_map_lock = PTHREAD_RWLOCK_INITIALIZER;
 niccolum_client_mq_map_t *niccolum_client_mq_map_list;
+unsigned int niccolum_client_mq_map_count = 0;
 
 static mqd_t niccolum_lookup_mq_for_client_locked(uuid_t clientUuid) 
 {
@@ -79,6 +90,41 @@ static mqd_t niccolum_lookup_mq_for_client(uuid_t clientUuid)
 	return mq_descriptor;
 }
 
+static void remove_client_mq_map(niccolum_client_mq_map_t *map) 
+{
+	map->next->prev = map->prev;
+	map->prev->next = map->next;
+	map->next = map->prev = map;
+	mq_close(map->mq_descriptor);
+	free(map);
+	niccolum_client_mq_map_count--;
+}
+
+#if 0
+static int niccolum_remove_mq_for_client_locked(uuid_t clientUuid)
+{
+	niccolum_client_mq_map_t *map = NULL;
+	int status = ENOENT;
+
+	pthread_rwlock_wrlock(&niccolum_client_mq_map_lock);
+
+	for (map = niccolum_client_mq_map_list->next;
+	     map != niccolum_client_mq_map_list;
+		 map = map->next) {
+
+		if (0 == memcmp(map->uuid, &clientUuid, sizeof(uuid_t))) {
+			remove_client_mq_map(map);
+			status = 0;
+			break;
+		}
+	}
+
+	pthread_rwlock_unlock(&niccolum_client_mq_map_lock);
+	
+	return status;
+}
+#endif // 0
+
 static int niccolum_insert_mq_for_client(uuid_t clientUuid, mqd_t mq_descriptor)
 {
 	niccolum_client_mq_map_t *map = malloc(sizeof(niccolum_client_mq_map_t));
@@ -99,8 +145,16 @@ static int niccolum_insert_mq_for_client(uuid_t clientUuid, mqd_t mq_descriptor)
 		niccolum_client_mq_map_list = map;
 	}
 
+	//
+	// TODO: parameterize this and adjust it - there's a low limit to the 
+	// number of message queues that are allowed to be opened.
+	//
+	if (niccolum_client_mq_map_count > 5) {
+		remove_client_mq_map(niccolum_client_mq_map_list->prev); // prune the oldest one	
+	}
+
 	while (niccolum_client_mq_map_list != map) {
-	if (niccolum_lookup_mq_for_client_locked(clientUuid) >= 0) {
+		if (niccolum_lookup_mq_for_client_locked(clientUuid) >= 0) {
 			/* already exists! */
 			status = -EEXIST;
 			break;
@@ -111,6 +165,7 @@ static int niccolum_insert_mq_for_client(uuid_t clientUuid, mqd_t mq_descriptor)
 		niccolum_client_mq_map_list->prev->next = map;
 		niccolum_client_mq_map_list->prev = map;
 		niccolum_client_mq_map_list = map;
+		niccolum_client_mq_map_count++;
 		break;
 	}
 	pthread_rwlock_unlock(&niccolum_client_mq_map_lock);
@@ -654,7 +709,7 @@ void niccolum_notify_reply_iov(fuse_req_t req, int error, struct iovec *iov, int
 	return;
 }
 
-int niccolum_send_reply_iov(fuse_req_t req, int error, struct iovec *iov, int count)
+int niccolum_send_reply_iov(fuse_req_t req, int error, struct iovec *iov, int count, int free_req)
 {
 	struct fuse_out_header out;
 	niccolum_message_t *niccolum_request = req->niccolum_req;
@@ -748,7 +803,10 @@ int niccolum_send_reply_iov(fuse_req_t req, int error, struct iovec *iov, int co
 		req->niccolum_rsp = NULL;
 	}
 
-	niccolum_free_req(req);
+	if (free_req) {
+		niccolum_free_req(req);
+	}
+	
 	return 0;
 }
 

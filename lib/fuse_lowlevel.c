@@ -257,7 +257,7 @@ int fuse_send_reply_iov_nofree(fuse_req_t req, int error, struct iovec *iov,
 
 	if (req->niccolum) {
 		assert(0 == req->niccolum_notify); // can't be both
-    	return niccolum_send_reply_iov(req, error, iov, count);
+    	return niccolum_send_reply_iov(req, error, iov, count, 0);
 	}
 	if (req->niccolum_notify) {
 		niccolum_notify_reply_iov(req, error, iov, count);
