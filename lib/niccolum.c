@@ -95,7 +95,14 @@ static void remove_client_mq_map(niccolum_client_mq_map_t *map)
 	map->next->prev = map->prev;
 	map->prev->next = map->next;
 	map->next = map->prev = map;
-	mq_close(map->mq_descriptor);
+	if (0 > mq_close(map->mq_descriptor)) {
+		fprintf(stderr, "%d @ %s (%s) FAILED TO CLOSE descriptor %d (%s)\n", 
+		        __LINE__, __FILE__, __FUNCTION__, (int) map->mq_descriptor, strerror(errno));
+	}
+	else {
+		fprintf(stderr, "%d @ %s (%s) closed descriptor %d\n", 
+		        __LINE__, __FILE__, __FUNCTION__, (int) map->mq_descriptor);
+	}
 	free(map);
 	niccolum_client_mq_map_count--;
 }
@@ -392,7 +399,8 @@ uuid_t niccolum_server_uuid;
  {
      (void) op;
      struct fuse_session *se;
-     
+     struct mq_attr attr;
+
      //
      // Save the original ops
      //
@@ -412,7 +420,14 @@ uuid_t niccolum_server_uuid;
     //
     // Create it if it does not exist.  Permissive permissions
     //
-	se->message_queue_descriptor = mq_open(se->message_queue_name, O_RDONLY | O_CREAT, 0622, NULL);
+    attr = (struct mq_attr){
+        .mq_flags = 0,
+        .mq_maxmsg = 10,
+        .mq_msgsize = 512,
+        .mq_curmsgs = 0,
+    };
+
+	se->message_queue_descriptor = mq_open(se->message_queue_name, O_RDONLY | O_CREAT, 0622, &attr);
 
     if (se->message_queue_descriptor < 0) {
 		fprintf(stderr, "fuse (niccolum): failed to create message queue: %s\n", strerror(errno));
@@ -443,11 +458,13 @@ static int niccolum_send_response(uuid_t clientUuid, niccolum_message_t *respons
 		mq_descriptor = niccolum_connect_to_client(clientUuid);
 
 		if (mq_descriptor >= 0) {
+		  	fprintf(stderr, "%s @ %d (%s): open mq %d\n", __FILE__, __LINE__, __FUNCTION__, (int) mq_descriptor);
 			niccolum_insert_mq_for_client(clientUuid, mq_descriptor);
 		}
 	}
 
 	if (mq_descriptor < 0) {
+		fprintf(stderr, "%s @ %d (%s): failed to connect to client %s\n", __FILE__, __LINE__, __FUNCTION__, strerror(errno));
 		return mq_descriptor;
 	}
 
@@ -528,6 +545,7 @@ static void *niccolum_mq_worker(void* arg)
 					niccolum_response->MessageLength = sizeof(niccolum_name_map_response_t);
 					((niccolum_name_map_response_t  *)niccolum_response->Message)->Status = NICCOLUM_MAP_RESPONSE_INVALID;
 					// bytes_to_send = offsetof(niccolum_message_t, Message) + sizeof(niccolum_name_map_response_t);
+					fprintf(stderr, "%s @ %d (%s): invalid request\n", __FILE__, __LINE__, __FUNCTION__);
 					bytes_to_send = 0;
 					break;
 				}
@@ -539,6 +557,7 @@ static void *niccolum_mq_worker(void* arg)
 				fprintf(stderr, "niccolum (fuse): do lookup on %s\n", &niccolum_request->Message[mp_length]);
 				req = niccolum_alloc_req(se);
 				if (NULL == req) {
+					fprintf(stderr, "%s @ %d (%s): alloc failure\n", __FILE__, __LINE__, __FUNCTION__);
 					break;
 				}
 				req->niccolum_req = niccolum_request;
@@ -597,7 +616,7 @@ static void *niccolum_mq_worker(void* arg)
 		
 		if (0 < bytes_to_send) {
 			uuid_t uuid;
-			fprintf(stderr, "niccolum (fuse): sending response %zu\n", bytes_to_send);
+			fprintf(stderr, "niccolum (fuse): sending response (size = %zu)\n", bytes_to_send);
 			memcpy(&uuid, &niccolum_request->SenderUuid, sizeof(uuid_t));
 			niccolum_send_response(uuid, niccolum_response);
 		}
