@@ -87,6 +87,14 @@ typedef struct niccolum_name_map_response {
 
 typedef niccolum_uuid_t niccolum_buf_t;
 
+typedef struct niccolum_map_release_request {
+	niccolum_key_t Key;
+} niccolum_map_release_request_t;
+
+typedef struct niccolum_map_release_response {
+	u_int32_t Status;
+} niccolum_map_release_response_t;
+
 //
 // Directory map logic
 //

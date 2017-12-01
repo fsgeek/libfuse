@@ -508,6 +508,12 @@ static void *niccolum_mq_worker(void* arg)
 			return NULL;
 		}
 
+		if (bytes_received < offsetof(niccolum_message_t, Message)) {
+			// this message isn't even big enough for us to process
+			fprintf(stderr, "niccolum (fuse): short message received from queue\n");
+			break;
+		}
+
 		/* now we have a message from the queue and need to process it */
 		if (0 != memcmp(NICCOLUM_MESSAGE_MAGIC, niccolum_request->MagicNumber, NICCOLUM_MESSAGE_MAGIC_SIZE)) {
 			/* not a valid message */
@@ -533,10 +539,11 @@ static void *niccolum_mq_worker(void* arg)
 
 			case NICCOLUM_NAME_MAP_REQUEST: {
 				/* first, is the request here a match for this file system? */
-				size_t message_length = strlen(niccolum_request->Message);
+				size_t message_length = strlen(niccolum_request->Message) + offsetof(niccolum_message_t, Message);
 				size_t mp_length = strlen(se->mountpoint);
 
-				if ((message_length > message_length) && strncmp(niccolum_request->Message, se->mountpoint, mp_length)) {
+				if ((message_length < bytes_received) ||
+				    (0 != strncmp(niccolum_request->Message, se->mountpoint, mp_length))) {
 					/* this is not ours */
 					memcpy(niccolum_response->MagicNumber, NICCOLUM_MESSAGE_MAGIC, NICCOLUM_MESSAGE_MAGIC_SIZE);
 					memcpy(&niccolum_response->SenderUuid, niccolum_server_uuid, sizeof(uuid_t));
@@ -546,7 +553,6 @@ static void *niccolum_mq_worker(void* arg)
 					((niccolum_name_map_response_t  *)niccolum_response->Message)->Status = NICCOLUM_MAP_RESPONSE_INVALID;
 					// bytes_to_send = offsetof(niccolum_message_t, Message) + sizeof(niccolum_name_map_response_t);
 					fprintf(stderr, "%s @ %d (%s): invalid request\n", __FILE__, __LINE__, __FUNCTION__);
-					bytes_to_send = 0;
 					break;
 				}
 
@@ -565,6 +571,36 @@ static void *niccolum_mq_worker(void* arg)
 				niccolum_response = NULL; /* again, passing it to the lookup, consume it in the completion handler */
 				niccolum_original_ops->lookup(req, FUSE_ROOT_ID, &niccolum_request->Message[mp_length+1]);
 				niccolum_request = NULL; /* passing it to the lookup */
+				break;
+			}
+
+			case NICCOLUM_MAP_RELEASE_REQUEST: {
+				size_t message_length = sizeof(niccolum_map_release_request_t) + offsetof(niccolum_message_t, Message);
+				niccolum_map_release_request_t *mrreq = (niccolum_map_release_request_t *)niccolum_request->Message;
+				niccolum_object_t *object = NULL;
+
+				// format generic response info
+				memcpy(niccolum_response->MagicNumber, NICCOLUM_MESSAGE_MAGIC, NICCOLUM_MESSAGE_MAGIC_SIZE);
+				memcpy(&niccolum_response->SenderUuid, niccolum_server_uuid, sizeof(uuid_t));
+				niccolum_response->MessageType = NICCOLUM_MAP_RELEASE_RESPONSE;
+				niccolum_response->MessageId = niccolum_request->MessageId;
+				niccolum_response->MessageLength = sizeof(niccolum_map_release_response_t);
+				bytes_to_send = offsetof(niccolum_message_t, Message) + sizeof(niccolum_map_release_response_t);
+
+				if ((message_length > bytes_received) || // short message
+				    (mrreq->Key.KeyLength > niccolum_request->MessageLength) || // short message
+				    (mrreq->Key.KeyLength != sizeof(uuid_t))) { // invalid key length
+					((niccolum_map_release_response_t  *)niccolum_response->Message)->Status = NICCOLUM_MAP_RESPONSE_INVALID;
+					fprintf(stderr, "%s @ %d (%s): invalid request\n", __FILE__, __LINE__, __FUNCTION__);
+					break;
+				}
+
+				// lookup
+				object = niccolum_object_lookup_by_uuid((uuid_t *)mrreq->Key.Key);
+				if (NULL != object) {
+					niccolum_object_release(object);
+				}
+				((niccolum_map_release_response_t  *)niccolum_response->Message)->Status = NICCOLUM_MAP_RESPONSE_SUCCESS;
 				break;
 			}
 
