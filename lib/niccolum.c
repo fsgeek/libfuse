@@ -539,10 +539,10 @@ static void *niccolum_mq_worker(void* arg)
 
 			case NICCOLUM_NAME_MAP_REQUEST: {
 				/* first, is the request here a match for this file system? */
-				size_t message_length = strlen(niccolum_request->Message) + offsetof(niccolum_message_t, Message);
+				size_t message_length = niccolum_request->MessageLength + offsetof(niccolum_message_t, Message);
 				size_t mp_length = strlen(se->mountpoint);
 
-				if ((message_length < bytes_received) ||
+				if ((bytes_received < message_length) ||
 				    (0 != strncmp(niccolum_request->Message, se->mountpoint, mp_length))) {
 					/* this is not ours */
 					memcpy(niccolum_response->MagicNumber, NICCOLUM_MESSAGE_MAGIC, NICCOLUM_MESSAGE_MAGIC_SIZE);
