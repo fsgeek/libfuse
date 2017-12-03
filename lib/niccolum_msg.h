@@ -3,6 +3,9 @@
  * All Rights Reserved
 */
 
+#if !defined(__NICCOLUM_MSG_H__)
+#define __NICCOLUM_MSG_H__ (1)
+
 // These are the messages used by niccolum for shared memory.  These should probably be replaced at some
 // point with something more efficient.
 //
@@ -20,6 +23,9 @@ typedef enum {
 	NICCOLUM_MAP_RELEASE_RESPONSE, // respond to the release request
 	NICCOLUM_DIR_MAP_REQUEST, // request a mapping of the directory contents
 	NICCOLUM_DIR_MAP_RESPONSE, // response to dir map request
+	NICCOLUM_UNLINK_REQUEST, // request file unlink
+	NICCOLUM_UNLINK_RESPONSE, // respond to file unlink request
+
 	// Everything beyond this is TODO
     NICCOLUM_FUSE_OP_REQUEST,
 	NICCOLUM_FUSE_OP_RESPONSE,
@@ -106,6 +112,18 @@ typedef struct niccolum_dir_map_response {
 	niccolum_uuid_t MapUuid;
 } niccolum_dir_map_response_t;
 
+//
+// Unlink structures
+//
+typedef struct niccolum_unlink_requst {
+    u_int16_t NameLength;
+    char Name[1];
+} niccolum_unlink_request_t;
+
+typedef struct niccolum_unlink_response {
+	u_int32_t Status;
+} niccolum_unlink_response_t;
+
 #if 0
 struct fuse_buf {
 	/**
@@ -141,3 +159,5 @@ struct fuse_buf {
 };
 
 #endif // 0
+
+#endif // !defined(__NICCOLUM_MSG_H__)

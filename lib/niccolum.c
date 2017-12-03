@@ -605,11 +605,38 @@ static void *niccolum_mq_worker(void* arg)
 			}
 
 			case NICCOLUM_DIR_MAP_REQUEST: {
-
 				break;
 			}
 
 			case NICCOLUM_FUSE_OP_REQUEST: {
+				break;
+			}
+
+			case NICCOLUM_UNLINK_REQUEST: {
+				size_t message_length = sizeof(niccolum_map_release_request_t) + offsetof(niccolum_message_t, Message);
+				niccolum_unlink_request_t *ulreq = (niccolum_unlink_request_t *)niccolum_request->Message;
+				niccolum_unlink_response_t *ulrsp = (niccolum_unlink_response_t *)niccolum_response->Message;
+
+				// format generic response info
+				memcpy(niccolum_response->MagicNumber, NICCOLUM_MESSAGE_MAGIC, NICCOLUM_MESSAGE_MAGIC_SIZE);
+				memcpy(&niccolum_response->SenderUuid, niccolum_server_uuid, sizeof(uuid_t));
+				niccolum_response->MessageType = NICCOLUM_UNLINK_RESPONSE;
+				niccolum_response->MessageId = niccolum_request->MessageId;
+				niccolum_response->MessageLength = sizeof(niccolum_unlink_response_t);
+				bytes_to_send = offsetof(niccolum_message_t, Message) + sizeof(niccolum_unlink_response_t);
+
+				if (message_length > bytes_received) { // invalid key length
+					((niccolum_unlink_response_t  *)niccolum_response->Message)->Status = NICCOLUM_MAP_RESPONSE_INVALID;
+					fprintf(stderr, "%s @ %d (%s): invalid request\n", __FILE__, __LINE__, __FUNCTION__);
+					break;
+				}
+
+				//
+				// TODO: this is a sleazy hack - I'm using passthrough which is read-only, but I want to test
+				//       unlink which isn't supported.
+				ulrsp->Status = unlink(&ulreq->Name[strlen(se->mountpoint)]);
+				// end gross hack
+
 				break;
 			}
 
