@@ -6,7 +6,9 @@
 #if !defined(__NICCOLUM_LOOKUP_H__)
 #define __NICCOLUM_LOOKUP_H__ (1)
 
+#if !defined(_FILE_OFFSET_BITS)
 #define _FILE_OFFSET_BITS (64)
+#endif // _FILE_OFFSET_BITS
 
 #include <fuse_lowlevel.h>
 #include <uuid/uuid.h>
