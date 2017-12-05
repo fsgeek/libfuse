@@ -26,6 +26,9 @@ typedef enum {
 	NICCOLUM_UNLINK_REQUEST, // request file unlink
 	NICCOLUM_UNLINK_RESPONSE, // respond to file unlink request
 
+	NICCOLUM_PATH_SEARCH_REQUEST, // look for a list of files in a list of paths
+	NICCOLUM_PATH_SEARCH_RESPONSE, // respond to a search request
+
 	// Everything beyond this is TODO
     NICCOLUM_FUSE_OP_REQUEST,
 	NICCOLUM_FUSE_OP_RESPONSE,
@@ -123,6 +126,33 @@ typedef struct niccolum_unlink_requst {
 typedef struct niccolum_unlink_response {
 	u_int32_t Status;
 } niccolum_unlink_response_t;
+
+//
+// Path search structures
+//
+typedef struct niccolum_path_search_request {
+	//
+	// The search data consists of two lists:
+	//
+	// <string><null><string><null><string><null><null>
+	// <string><null><string><null><null><null>
+	//
+	// TODO: we may need to have some way of specifying
+	//       this is sent in shared memory.
+	//
+	u_int16_t SearchDataFlags;
+	u_int16_t SearchDataLength;
+	char SearchData[1];
+} niccolum_path_search_request_t;
+
+#define NICCOLUM_SEARCH_DATA_RESIDENT   (0x1)
+#define NICCOLUM_SEARCH_DATA_SHARED_MEM (0x2)
+
+typedef struct niccolum_path_search_response {
+	u_int32_t Status;
+	u_int16_t PathLength;	
+	char Path[1];
+} niccolum_path_search_response_t;
 
 #if 0
 struct fuse_buf {

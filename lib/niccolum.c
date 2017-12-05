@@ -352,6 +352,14 @@ static void niccolum_write_buf(fuse_req_t req, fuse_ino_t ino, struct fuse_bufve
 	return niccolum_original_ops->write_buf(req, ino, in_buf, off, fi);
 }
 
+static void niccolum_unlink(fuse_req_t req, fuse_ino_t parent, const char *name)
+{
+	// This is my testing hack - to implement unlink here
+	(void) parent;
+	(void) name;
+	fuse_reply_err(req, 0);
+}
+
 
 static struct fuse_lowlevel_ops niccolum_ops = {
 	.init		= niccolum_init,
@@ -359,6 +367,7 @@ static struct fuse_lowlevel_ops niccolum_ops = {
 	.forget		= niccolum_forget,
 	.getattr	= niccolum_getattr,
 	.readlink	= niccolum_readlink,
+	.unlink     = niccolum_unlink,
 	.opendir	= niccolum_opendir,
 	.readdir	= niccolum_readdir,
 	.readdirplus	= niccolum_readdirplus,
@@ -452,6 +461,7 @@ static int niccolum_connect_to_client(uuid_t clientUuid)
 static int niccolum_send_response(uuid_t clientUuid, niccolum_message_t *response)
 {
 	mqd_t mq_descriptor = niccolum_lookup_mq_for_client(clientUuid);
+	size_t bytes_to_send;
 
 	if (mq_descriptor == -ENOENT) {
 		/* create it */	
@@ -468,9 +478,20 @@ static int niccolum_send_response(uuid_t clientUuid, niccolum_message_t *respons
 		return mq_descriptor;
 	}
 
-	return mq_send(mq_descriptor, (char *)response, offsetof(niccolum_message_t, Message) + response->MessageLength, 0);
+	// don't send less than the smallest sized message
+	// TODO: should we adjust the receiver to allow no message data? Probably safer.
+	bytes_to_send = offsetof(niccolum_message_t, Message) + response->MessageLength;
+
+	if (bytes_to_send < sizeof(niccolum_message_t)) {
+		bytes_to_send = sizeof(niccolum_message_t);
+	}
+
+	return mq_send(mq_descriptor, (char *)response, bytes_to_send, 0);
 
 }
+
+// TODO: remove this
+void niccolum_test_search(void);
 
 static void *niccolum_mq_worker(void* arg)
 {
@@ -640,13 +661,14 @@ static void *niccolum_mq_worker(void* arg)
 				break;
 			}
 
-			case NICCOLUM_TEST: {
-				niccolum_test_message_t *test_message = (niccolum_test_message_t *)niccolum_request->Message;
-				ssize_t response_length = offsetof(niccolum_message_t, Message) + test_message->MessageLength;
+			case NICCOLUM_PATH_SEARCH_REQUEST: {
+				// niccolum_path_search_request_t *search_message = (niccolum_path_search_request_t *)niccolum_request->Message;
+				niccolum_path_search_response_t *search_response = NULL;
+				ssize_t response_length = offsetof(niccolum_message_t, Message) + sizeof(niccolum_path_search_response_t);
 
 				memcpy(niccolum_response->MagicNumber, NICCOLUM_MESSAGE_MAGIC, NICCOLUM_MESSAGE_MAGIC_SIZE);
 				memcpy(&niccolum_response->SenderUuid, niccolum_server_uuid, sizeof(uuid_t));			
-				niccolum_response->MessageType = NICCOLUM_TEST_RESPONSE;
+				niccolum_response->MessageType = NICCOLUM_PATH_SEARCH_RESPONSE;
 				niccolum_response->MessageId = niccolum_request->MessageId;
 
 				if (response_length < niccolum_request->MessageLength) {
@@ -656,10 +678,33 @@ static void *niccolum_mq_worker(void* arg)
 					break;
 				}
 
+				// TODO: implement this functionality
+
 				/* send response */
-				niccolum_response->MessageLength = offsetof(niccolum_message_t, Message) + test_message->MessageLength;
-				memcpy(niccolum_response->Message, test_message, response_length);
-				bytes_to_send = offsetof(niccolum_message_t, Message) + response_length;
+				niccolum_response->MessageLength = sizeof(niccolum_path_search_response_t);
+				search_response = (niccolum_path_search_response_t *)niccolum_response->Message;
+				search_response->Status = ENOSYS; // TODO: rationalize these error codes
+				search_response->PathLength = 0;
+				search_response->Path[0] = '\0';
+				bytes_to_send = response_length;
+				
+				break;
+			}
+
+			case NICCOLUM_TEST: {
+				memcpy(niccolum_response->MagicNumber, NICCOLUM_MESSAGE_MAGIC, NICCOLUM_MESSAGE_MAGIC_SIZE);
+				memcpy(&niccolum_response->SenderUuid, niccolum_server_uuid, sizeof(uuid_t));			
+				niccolum_response->MessageType = NICCOLUM_TEST_RESPONSE;
+				niccolum_response->MessageId = niccolum_request->MessageId;
+
+				//// test code
+				niccolum_test_search();
+				/// end test code
+
+				/* send response */
+				niccolum_response->MessageLength = 0;
+				niccolum_response->Message[0] = '\0';
+				bytes_to_send = sizeof(niccolum_message_t);
 				
 				break;
 			}
